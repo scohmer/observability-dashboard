@@ -74,10 +74,10 @@ All logs pushed via HTTP push (Loki Promtail model)  ─────────
 
 - Python 3.9+
 - Ansible 2.14+
-- `community.general` collection: `ansible-galaxy collection install community.general`
-- `ansible.posix` collection: `ansible-galaxy collection install ansible.posix`
-- `community.windows` collection: `ansible-galaxy collection install community.windows`
-- `ansible.windows` collection: `ansible-galaxy collection install ansible.windows`
+- Required collections: `ansible.posix`, `community.general`, `ansible.windows`, `community.windows`
+- **Do not install these manually** — `setup.sh` handles installation automatically, using
+  offline tarballs from `offline-packages/ansible-collections/` if present (air-gapped),
+  or falling back to Ansible Galaxy on internet-connected controllers
 
 ### Linux Target Hosts
 
@@ -101,10 +101,11 @@ All logs pushed via HTTP push (Loki Promtail model)  ─────────
 ```bash
 git clone https://github.com/scohmer/observability-dashboard.git
 cd observability-dashboard
-
-# Install Ansible collections
-cd ansible && ansible-galaxy collection install -r requirements.yml 2>/dev/null || true; cd ..
 ```
+
+> **Air-gapped controllers:** run `scripts/offline-prep.sh` on an internet-connected machine
+> first to download Ansible collections and all binaries into `offline-packages/`.
+> `setup.sh` will install collections from those local files automatically — no Galaxy access needed.
 
 ### 2. Run the interactive setup wizard
 
