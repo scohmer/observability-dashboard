@@ -265,10 +265,11 @@ docker compose restart prometheus  # Reload Prometheus config
 ansible-playbook ansible/playbooks/deploy-node-exporter.yml --limit new_host
 ```
 
-Or reload Prometheus without restart (if `--web.enable-lifecycle` is set):
+Or reload Prometheus without restart (if `--web.enable-lifecycle` is set, run this
+from the monitoring server or any host with network access to it):
 
 ```bash
-curl -X POST http://localhost:9090/-/reload
+curl -X POST http://<monitoring-server>:9090/-/reload
 ```
 
 ---
@@ -409,10 +410,10 @@ docker run --rm -v "$(pwd)/config/prometheus:/etc/prometheus" \
 ### Prometheus targets are DOWN
 
 ```bash
-# View targets in Prometheus UI
-open http://localhost:9090/targets
+# View targets in Prometheus UI (open in browser)
+http://<monitoring-server>:9090/targets
 
-# Test connectivity from monitoring server
+# Test connectivity from the monitoring server
 curl http://<host-ip>:9100/metrics | head    # Linux
 curl http://<host-ip>:9182/metrics | head    # Windows
 
@@ -425,8 +426,8 @@ curl http://<host-ip>:9182/metrics | head    # Windows
 
 1. Check datasource: Settings → Data Sources → Prometheus → Test
 2. Check time range — set to "Last 1 hour" or wider
-3. Verify Prometheus has targets: http://localhost:9090/targets
-4. Check Prometheus has data: http://localhost:9090/graph?g0.expr=up
+3. Verify Prometheus has targets: `http://<monitoring-server>:9090/targets`
+4. Check Prometheus has data: `http://<monitoring-server>:9090/graph?g0.expr=up`
 
 ### Loki not receiving logs
 
