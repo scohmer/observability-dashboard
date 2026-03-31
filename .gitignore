@@ -2,8 +2,8 @@
 offline-packages/docker-images/
 offline-packages/node_exporter/*.tar.gz
 offline-packages/windows_exporter/*.msi
-offline-packages/promtail/*.zip
-offline-packages/promtail/*.exe
+offline-packages/alloy/*.zip
+offline-packages/alloy/*.exe
 offline-packages/nssm/*.zip
 offline-packages/nssm/*.exe
 offline-packages/ansible-collections/*.tar.gz

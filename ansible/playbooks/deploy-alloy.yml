@@ -1,0 +1,72 @@
+---
+# deploy-alloy.yml
+# Deploys Grafana Alloy (log and metrics collection agent) to all hosts.
+# Alloy replaces Promtail for log forwarding and adds self-monitoring metrics.
+#
+# What this playbook does:
+#   - Linux: installs the alloy binary, deploys config.alloy and systemd unit
+#   - Windows: installs alloy.exe via NSSM, deploys config.alloy as a service
+#   - Both: opens firewall port 12345, verifies the /ready endpoint
+
+- name: Deploy Grafana Alloy to Linux hosts
+  hosts: linux
+  gather_facts: true
+  become: true
+
+  pre_tasks:
+    - name: Display deployment target
+      ansible.builtin.debug:
+        msg: >
+          Deploying Grafana Alloy {{ alloy_version | default('1.4.2') }} to
+          {{ inventory_hostname }} ({{ ansible_distribution }})
+          -> Loki: {{ loki_server }}:{{ loki_port | default(3100) }}
+
+  roles:
+    - role: alloy_linux
+
+  post_tasks:
+    - name: Verify Alloy ready endpoint
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ alloy_port | default(12345) }}/-/ready"
+        return_content: false
+        status_code: 200
+      delegate_to: localhost
+      become: false
+      retries: 6
+      delay: 5
+      register: alloy_check
+      until: alloy_check.status == 200
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: "Grafana Alloy deployed successfully on {{ inventory_hostname }}"
+
+# ---------------------------------------------------------------------------
+
+- name: Deploy Grafana Alloy to Windows hosts
+  hosts: windows
+  gather_facts: true
+
+  pre_tasks:
+    - name: Display deployment target
+      ansible.builtin.debug:
+        msg: >
+          Deploying Grafana Alloy {{ alloy_version | default('1.4.2') }} to
+          {{ inventory_hostname }} ({{ ansible_distribution }})
+          -> Loki: {{ loki_server }}:{{ loki_port | default(3100) }}
+
+  roles:
+    - role: alloy_windows
+
+  post_tasks:
+    - name: Wait for Alloy HTTP port on Windows
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: "{{ alloy_port | default(12345) }}"
+        timeout: 60
+        state: started
+      delegate_to: localhost
+
+    - name: Report success
+      ansible.builtin.debug:
+        msg: "Grafana Alloy deployed successfully on Windows host {{ inventory_hostname }}"

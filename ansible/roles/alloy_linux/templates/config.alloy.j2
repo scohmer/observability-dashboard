@@ -1,0 +1,73 @@
+// Grafana Alloy configuration for {{ inventory_hostname }}
+// Managed by Ansible — do not edit manually.
+// River (Alloy) configuration language.
+
+// ── Loki output ───────────────────────────────────────────────────────────────
+loki.write "default" {
+  endpoint {
+    url = "http://{{ loki_server }}:{{ loki_port | default(3100) }}/loki/api/v1/push"
+  }
+}
+
+// ── /var/log file collection ──────────────────────────────────────────────────
+local.file_match "varlog" {
+  path_targets = [
+    {
+      __path__ = "/var/log/*.log",
+      job      = "varlog",
+      host     = "{{ inventory_hostname }}",
+    },
+    {
+      __path__ = "/var/log/**/*.log",
+      job      = "varlog",
+      host     = "{{ inventory_hostname }}",
+    },
+  ]
+}
+
+loki.source.file "varlog" {
+  targets    = local.file_match.varlog.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// ── systemd journal ───────────────────────────────────────────────────────────
+loki.source.journal "journal" {
+  forward_to = [loki.write.default.receiver]
+  max_age    = "12h"
+  labels = {
+    job  = "systemd-journal",
+    host = "{{ inventory_hostname }}",
+  }
+  relabel_rules = loki.relabel.journal.rules
+}
+
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "hostname"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+}
+
+// ── Self-monitoring (expose Alloy metrics to Prometheus) ─────────────────────
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy_self" {
+  targets    = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://{{ monitoring_server }}:{{ prometheus_port | default(9090) }}/api/v1/write"
+  }
+}

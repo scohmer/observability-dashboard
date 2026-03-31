@@ -1,0 +1,53 @@
+---
+# defaults/main.yml — alloy_linux role
+
+# Grafana Alloy version to install
+alloy_version: "1.4.2"
+
+# Port Alloy HTTP server listens on (UI, metrics, readiness)
+alloy_port: 12345
+
+# System user that runs Alloy
+alloy_user: alloy
+alloy_group: alloy
+
+# Installation directory for the binary
+alloy_bin_dir: /usr/local/bin
+
+# Directory for configuration
+alloy_config_dir: /etc/alloy
+
+# Data directory (WAL, positions)
+alloy_data_dir: /var/lib/alloy
+
+# Directory for offline packages on the control node
+offline_packages_dir: "{{ playbook_dir }}/../../offline-packages"
+
+# Architecture map (Ansible arch → Alloy release arch)
+alloy_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: arm
+
+# Derived architecture string
+alloy_arch: "{{ alloy_arch_map[ansible_architecture] | default('amd64') }}"
+
+# Archive and binary filenames
+alloy_archive_name: "alloy-linux-{{ alloy_arch }}.zip"
+alloy_binary_name: "alloy-linux-{{ alloy_arch }}"
+
+# Download URL
+alloy_download_url: >-
+  https://github.com/grafana/alloy/releases/download/v{{ alloy_version }}/{{ alloy_archive_name }}
+
+# Path to offline archive on the control node
+alloy_offline_src: "{{ offline_packages_dir }}/alloy/{{ alloy_archive_name }}"
+
+# Systemd service name
+alloy_service_name: alloy
+
+# Temporary directory on target host
+alloy_tmp_dir: /var/ansible/tmp/alloy_install
+
+# Whether to manage firewall rules
+alloy_manage_firewall: true

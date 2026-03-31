@@ -1,0 +1,175 @@
+---
+# tasks/main.yml — alloy_windows role
+
+# ---------------------------------------------------------------------------
+# Pre-flight
+# ---------------------------------------------------------------------------
+- name: Assert target is Windows
+  ansible.builtin.assert:
+    that: ansible_os_family == "Windows"
+    fail_msg: "This role only supports Windows targets."
+
+# ---------------------------------------------------------------------------
+# Directory setup
+# ---------------------------------------------------------------------------
+- name: Create Alloy installation directory
+  ansible.windows.win_file:
+    path: "{{ alloy_install_dir }}"
+    state: directory
+
+- name: Create Alloy configuration directory
+  ansible.windows.win_file:
+    path: "{{ alloy_config_dir }}"
+    state: directory
+
+- name: Create Alloy data directory
+  ansible.windows.win_file:
+    path: "{{ alloy_data_dir }}"
+    state: directory
+
+# ---------------------------------------------------------------------------
+# NSSM delivery (service manager)
+# ---------------------------------------------------------------------------
+- name: Check if offline NSSM exists on control node
+  ansible.builtin.stat:
+    path: "{{ nssm_offline_src }}"
+  register: offline_nssm
+  delegate_to: localhost
+  become: false
+
+- name: Create NSSM installation directory
+  ansible.windows.win_file:
+    path: "{{ nssm_install_dir }}"
+    state: directory
+
+- name: "[OFFLINE] Copy NSSM from offline-packages"
+  ansible.windows.win_copy:
+    src: "{{ nssm_offline_src }}"
+    dest: "{{ nssm_install_dir }}\\nssm.exe"
+  when: offline_nssm.stat.exists
+
+- name: "[ONLINE] Download NSSM zip from nssm.cc"
+  ansible.windows.win_get_url:
+    url: "https://nssm.cc/release/nssm-2.24.zip"
+    dest: 'C:\Windows\Temp\nssm.zip'
+    timeout: 60
+  when: not offline_nssm.stat.exists
+
+- name: "[ONLINE] Extract NSSM binary"
+  community.windows.win_unzip:
+    src: 'C:\Windows\Temp\nssm.zip'
+    dest: 'C:\Windows\Temp\nssm_extract'
+    creates: 'C:\Windows\Temp\nssm_extract\nssm-2.24\win64\nssm.exe'
+  when: not offline_nssm.stat.exists
+
+- name: "[ONLINE] Copy NSSM to install directory"
+  ansible.windows.win_copy:
+    src: 'C:\Windows\Temp\nssm_extract\nssm-2.24\win64\nssm.exe'
+    dest: "{{ nssm_install_dir }}\\nssm.exe"
+    remote_src: true
+  when: not offline_nssm.stat.exists
+
+# ---------------------------------------------------------------------------
+# Alloy binary delivery — offline-first
+# ---------------------------------------------------------------------------
+- name: Check if offline Alloy archive exists on control node
+  ansible.builtin.stat:
+    path: "{{ alloy_offline_src }}"
+  register: offline_alloy
+  delegate_to: localhost
+  become: false
+
+- name: "[OFFLINE] Copy Alloy archive from offline-packages"
+  ansible.windows.win_copy:
+    src: "{{ alloy_offline_src }}"
+    dest: 'C:\Windows\Temp\alloy.zip'
+  when: offline_alloy.stat.exists
+
+- name: "[ONLINE] Download Alloy archive from GitHub"
+  ansible.windows.win_get_url:
+    url: "{{ alloy_download_url }}"
+    dest: 'C:\Windows\Temp\alloy.zip'
+    timeout: 120
+  when: not offline_alloy.stat.exists
+
+- name: Extract Alloy executable from archive
+  community.windows.win_unzip:
+    src: 'C:\Windows\Temp\alloy.zip'
+    dest: 'C:\Windows\Temp\alloy_extract'
+    creates: "C:\\Windows\\Temp\\alloy_extract\\{{ alloy_exe_name }}"
+
+- name: Install Alloy executable
+  ansible.windows.win_copy:
+    src: "C:\\Windows\\Temp\\alloy_extract\\{{ alloy_exe_name }}"
+    dest: "{{ alloy_install_dir }}\\alloy.exe"
+    remote_src: true
+  notify: Restart alloy windows
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+- name: Deploy Alloy configuration file
+  ansible.windows.win_template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_dir }}\\config.alloy"
+  notify: Restart alloy windows
+
+# ---------------------------------------------------------------------------
+# Windows Service via NSSM
+# ---------------------------------------------------------------------------
+- name: Check if Alloy service already exists
+  ansible.windows.win_service_info:
+    name: "{{ alloy_service_name }}"
+  register: alloy_svc_info
+  ignore_errors: true
+
+- name: Install Alloy as a Windows service via NSSM
+  ansible.windows.win_shell: |
+    "{{ nssm_install_dir }}\nssm.exe" install "{{ alloy_service_name }}" "{{ alloy_install_dir }}\alloy.exe"
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" AppParameters "run --storage.path=""{{ alloy_data_dir }}"" ""{{ alloy_config_dir }}\config.alloy"""
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" AppDirectory "{{ alloy_install_dir }}"
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" DisplayName "{{ alloy_service_display }}"
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" Description "{{ alloy_service_description }}"
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" Start SERVICE_AUTO_START
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" AppStdout "{{ alloy_config_dir }}\alloy-stdout.log"
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" AppStderr "{{ alloy_config_dir }}\alloy-stderr.log"
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" AppRotateFiles 1
+    "{{ nssm_install_dir }}\nssm.exe" set "{{ alloy_service_name }}" AppRotateBytes 10485760
+  when: not (alloy_svc_info.exists | default(false))
+
+- name: Ensure Alloy service is set to auto-start
+  ansible.windows.win_service:
+    name: "{{ alloy_service_name }}"
+    start_mode: auto
+
+- name: Ensure Alloy service is running
+  ansible.windows.win_service:
+    name: "{{ alloy_service_name }}"
+    state: started
+
+# ---------------------------------------------------------------------------
+# Windows Firewall
+# ---------------------------------------------------------------------------
+- name: Allow Alloy HTTP port through Windows Firewall
+  community.windows.win_firewall_rule:
+    name: "{{ alloy_firewall_rule_name }}"
+    localport: "{{ alloy_port }}"
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+- name: Query Alloy service state
+  ansible.windows.win_service_info:
+    name: "{{ alloy_service_name }}"
+  register: final_svc_state
+
+- name: Assert Alloy service is running
+  ansible.builtin.assert:
+    that: final_svc_state.services[0].state == "running"
+    fail_msg: "Alloy service is not running on {{ inventory_hostname }}"
+    success_msg: "Alloy is running on {{ inventory_hostname }}:{{ alloy_port }}"

@@ -1,0 +1,54 @@
+// Grafana Alloy configuration for {{ inventory_hostname }}
+// Managed by Ansible — do not edit manually.
+// River (Alloy) configuration language.
+
+// ── Loki output ───────────────────────────────────────────────────────────────
+loki.write "default" {
+  endpoint {
+    url = "http://{{ loki_server }}:{{ loki_port | default(3100) }}/loki/api/v1/push"
+  }
+}
+
+// ── Windows Event Log collection ─────────────────────────────────────────────
+{% for channel in windows_event_channels %}
+loki.source.windowsevent "{{ channel | lower }}" {
+  eventlog_name          = "{{ channel }}"
+  use_incoming_timestamp = false
+  forward_to             = [loki.write.default.receiver]
+  labels = {
+    job      = "windows-event-log",
+    host     = "{{ inventory_hostname }}",
+    log_type = "{{ channel | lower }}",
+  }
+}
+
+{% endfor %}
+{% if alloy_collect_iis_logs %}
+// ── IIS log collection ────────────────────────────────────────────────────────
+local.file_match "iis" {
+  path_targets = [{
+    __path__ = {{ iis_log_path | tojson }},
+    job      = "iis",
+    host     = "{{ inventory_hostname }}",
+  }]
+}
+
+loki.source.file "iis" {
+  targets    = local.file_match.iis.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+{% endif %}
+// ── Self-monitoring ───────────────────────────────────────────────────────────
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy_self" {
+  targets    = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://{{ monitoring_server }}:{{ prometheus_port | default(9090) }}/api/v1/write"
+  }
+}

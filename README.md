@@ -1,7 +1,7 @@
 # Observability Dashboard
 
 A production-ready, self-hosted infrastructure monitoring stack built with
-**Grafana**, **Prometheus**, **Loki**, **Promtail**, and **Node Exporter**.
+**Grafana**, **Prometheus**, **Loki**, **Grafana Alloy**, and **Node Exporter**.
 Designed to work on both internet-connected and **air-gapped / disconnected**
 networks. Supports Linux and Windows hosts.
 
@@ -34,15 +34,15 @@ networks. Supports Linux and Windows hosts.
 │ └──────────────────┘ │   │ └──────────────────┘ │          │      │
 │                      │   │                      │          │      │
 │ ┌──────────────────┐ │   │ ┌──────────────────┐ │          │      │
-│ │    Promtail      │─┼───┼─│    Promtail       │─┼──────────┘      │
-│ │  (port 9080)     │ │   │ │  (port 9080)     │ │                  │
+│ │  Grafana Alloy   │─┼───┼─│  Grafana Alloy   │─┼──────────┘      │
+│ │  (port 12345)    │ │   │ │  (port 12345)    │ │                  │
 │ │  /var/log/*.log  │ │   │ │  Windows Events  │ │                  │
 │ │  journald        │ │   │ │  IIS logs        │ │                  │
 │ └──────────────────┘ │   │ └──────────────────┘ │                  │
 └─────────────────────┘   └─────────────────────┘                   │
                                                                      │
 All metrics scraped via HTTP pull (Prometheus model)                 │
-All logs pushed via HTTP push (Loki Promtail model)  ────────────────┘
+All logs pushed via HTTP push (Alloy → Loki)         ────────────────┘
 ```
 
 ### Data Flow Summary
@@ -51,8 +51,8 @@ All logs pushed via HTTP push (Loki Promtail model)  ─────────
 |-----------|----------|-----------|------|
 | Metrics (Linux) | HTTP scrape | Pull: Prometheus ← node_exporter | 9100 |
 | Metrics (Windows) | HTTP scrape | Pull: Prometheus ← windows_exporter | 9182 |
-| Logs (Linux) | HTTP push | Push: Promtail → Loki | 3100 |
-| Logs (Windows) | HTTP push | Push: Promtail → Loki | 3100 |
+| Logs (Linux) | HTTP push | Push: Alloy → Loki | 3100 |
+| Logs (Windows) | HTTP push | Push: Alloy → Loki | 3100 |
 | Visualization | HTTP | Browser → Grafana | 3000 |
 
 ---
@@ -83,14 +83,14 @@ All logs pushed via HTTP push (Loki Promtail model)  ─────────
 
 - SSH access with sudo privileges
 - Python 3 installed
-- Firewall allows inbound TCP on port 9100 (node_exporter) and 9080 (Promtail)
+- Firewall allows inbound TCP on port 9100 (node_exporter) and 12345 (Alloy)
 
 ### Windows Target Hosts
 
 - WinRM enabled (HTTP, port 5985) — see setup instructions below
 - Administrator credentials or equivalent
 - .NET Framework 4.5+ (pre-installed on Windows Server 2012+)
-- Firewall allows inbound TCP on port 9182 (windows_exporter) and 9080 (Promtail)
+- Firewall allows inbound TCP on port 9182 (windows_exporter) and 12345 (Alloy)
 
 ---
 
@@ -124,7 +124,7 @@ It generates:
 - `ansible/inventory/hosts.yml`
 - `config/prometheus/prometheus.yml` (with your scrape targets)
 - `docker-compose.yml` (with your passwords and ports, used by podman-compose)
-- `config/promtail/promtail-<hostname>.yml` (per host)
+- `config/alloy/config-<hostname>.alloy` (per-host preview — authoritative config deployed by Ansible)
 
 ### 3. Deploy everything via Ansible
 
@@ -138,8 +138,8 @@ ansible-playbook ansible/playbooks/deploy-monitoring-server.yml
 # Deploy node_exporter (Linux) and windows_exporter (Windows)
 ansible-playbook ansible/playbooks/deploy-node-exporter.yml
 
-# Deploy Promtail log shipper to all hosts
-ansible-playbook ansible/playbooks/deploy-promtail.yml
+# Deploy Grafana Alloy to all hosts
+ansible-playbook ansible/playbooks/deploy-alloy.yml
 ```
 
 ### 4. Open Grafana
@@ -166,10 +166,10 @@ bash scripts/offline-prep.sh
 ```
 
 This downloads (~1.5 GB):
-- 4 container image tarballs (Grafana, Prometheus, Loki, Promtail)
+- 4 container image tarballs (Grafana, Prometheus, Loki, Alloy)
 - node_exporter binaries for Linux amd64 and arm64
 - windows_exporter MSI for amd64
-- Promtail binaries for Linux and Windows
+- Alloy binaries for Linux (amd64, arm64) and Windows amd64
 - NSSM (Windows service manager)
 - SHA-256 manifest for integrity verification
 
@@ -205,7 +205,7 @@ copy binaries directly to target hosts without internet access.
 ```bash
 cd ansible
 ansible-playbook playbooks/deploy-node-exporter.yml
-ansible-playbook playbooks/deploy-promtail.yml
+ansible-playbook playbooks/deploy-alloy.yml
 ```
 
 ---
@@ -321,12 +321,12 @@ ansible/
 │   └── windows.yml                      WinRM settings
 ├── playbooks/
 │   ├── deploy-node-exporter.yml         Import linux + windows sub-plays
-│   └── deploy-promtail.yml              Import linux + windows sub-plays
+│   └── deploy-alloy.yml                 Deploy Alloy to linux + windows hosts
 └── roles/
     ├── node_exporter_linux/             node_exporter for Linux
     ├── node_exporter_windows/           windows_exporter for Windows
-    ├── promtail_linux/                  Promtail for Linux
-    └── promtail_windows/               Promtail for Windows
+    ├── alloy_linux/                     Grafana Alloy for Linux
+    └── alloy_windows/                   Grafana Alloy for Windows
 ```
 
 ### Offline-first logic
@@ -428,10 +428,10 @@ curl http://<host-ip>:9182/metrics | head    # Windows
 # Check Loki is ready
 curl http://localhost:3100/ready
 
-# Check Promtail status on a target host
+# Check Alloy status on a target host
 # Linux:
-systemctl status promtail
-curl http://localhost:9080/ready
+systemctl status alloy
+curl http://localhost:12345/-/ready
 
 # Check Loki has labels
 curl http://localhost:3100/loki/api/v1/labels | python3 -m json.tool
@@ -503,7 +503,7 @@ ansible-playbook playbooks/deploy-node-exporter.yml --ask-vault-pass
 | Grafana | latest | Image tag in docker-compose.yml |
 | Prometheus | latest | Image tag in docker-compose.yml |
 | Loki | latest | Image tag in docker-compose.yml |
-| Promtail | 3.0.0 | Pinned in group_vars/all.yml |
+| Grafana Alloy | 1.4.2 | Pinned in group_vars/all.yml |
 | node_exporter | 1.8.2 | Pinned in group_vars/all.yml |
 | windows_exporter | 0.29.2 | Pinned in group_vars/all.yml |
 

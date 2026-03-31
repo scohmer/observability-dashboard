@@ -1,8 +1,0 @@
----
-# handlers/main.yml — promtail_windows role
-
-- name: Restart promtail windows
-  ansible.windows.win_service:
-    name: Promtail
-    state: restarted
-  listen: Restart promtail windows

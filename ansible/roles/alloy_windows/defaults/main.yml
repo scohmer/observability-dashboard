@@ -1,0 +1,50 @@
+---
+# defaults/main.yml — alloy_windows role
+
+# Grafana Alloy version to install
+alloy_version: "1.4.2"
+
+# Port Alloy HTTP server listens on
+alloy_port: 12345
+
+# Installation and data directories on the Windows host
+alloy_install_dir: 'C:\Program Files\GrafanaLabs\Alloy'
+alloy_config_dir: 'C:\ProgramData\GrafanaLabs\Alloy'
+alloy_data_dir: 'C:\ProgramData\GrafanaLabs\Alloy\data'
+
+# Directory for offline packages on the control node
+offline_packages_dir: "{{ playbook_dir }}/../../offline-packages"
+
+# Windows executable archive filename
+alloy_exe_zip_name: "alloy-windows-amd64.exe.zip"
+alloy_exe_name: "alloy-windows-amd64.exe"
+
+# Download URL
+alloy_download_url: >-
+  https://github.com/grafana/alloy/releases/download/v{{ alloy_version }}/{{ alloy_exe_zip_name }}
+
+# Path to offline archive on the control node
+alloy_offline_src: "{{ offline_packages_dir }}/alloy/{{ alloy_exe_zip_name }}"
+
+# NSSM (Non-Sucking Service Manager) — used to register Alloy as a Windows service
+nssm_exe_name: "nssm.exe"
+nssm_offline_src: "{{ offline_packages_dir }}/nssm/{{ nssm_exe_name }}"
+nssm_install_dir: 'C:\Program Files\NSSM'
+
+# Windows service name
+alloy_service_name: "Alloy"
+alloy_service_display: "Grafana Alloy"
+alloy_service_description: "Grafana Alloy — log and metrics collection agent"
+
+# Windows Event Log channels to collect
+windows_event_channels:
+  - Application
+  - System
+  - Security
+
+# IIS log collection
+alloy_collect_iis_logs: true
+iis_log_path: 'C:\inetpub\logs\LogFiles\**\*.log'
+
+# Windows Firewall rule name
+alloy_firewall_rule_name: "Allow Grafana Alloy"

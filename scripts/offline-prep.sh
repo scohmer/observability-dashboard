@@ -22,7 +22,7 @@ OUTPUT_DIR="${SCRIPT_DIR}/../offline-packages"
 GRAFANA_VERSION="${GRAFANA_VERSION:-latest}"
 PROMETHEUS_VERSION="${PROMETHEUS_VERSION:-latest}"
 LOKI_VERSION="${LOKI_VERSION:-latest}"
-PROMTAIL_VERSION="${PROMTAIL_VERSION:-3.0.0}"
+ALLOY_VERSION="${ALLOY_VERSION:-1.4.2}"
 NODE_EXPORTER_VERSION="${NODE_EXPORTER_VERSION:-1.8.2}"
 WINDOWS_EXPORTER_VERSION="${WINDOWS_EXPORTER_VERSION:-0.29.2}"
 NSSM_VERSION="${NSSM_VERSION:-2.24}"
@@ -53,7 +53,7 @@ info "Creating output directories..."
 mkdir -p "${OUTPUT_DIR}/docker-images"
 mkdir -p "${OUTPUT_DIR}/node_exporter"
 mkdir -p "${OUTPUT_DIR}/windows_exporter"
-mkdir -p "${OUTPUT_DIR}/promtail"
+mkdir -p "${OUTPUT_DIR}/alloy"
 mkdir -p "${OUTPUT_DIR}/nssm"
 mkdir -p "${OUTPUT_DIR}/pip-packages"
 
@@ -108,7 +108,7 @@ pull_and_save() {
 pull_and_save "grafana/grafana"  "${GRAFANA_VERSION}"    "grafana-grafana-${GRAFANA_VERSION}.tar.gz"
 pull_and_save "prom/prometheus"  "${PROMETHEUS_VERSION}" "prom-prometheus-${PROMETHEUS_VERSION}.tar.gz"
 pull_and_save "grafana/loki"     "${LOKI_VERSION}"       "grafana-loki-${LOKI_VERSION}.tar.gz"
-pull_and_save "grafana/promtail" "${LOKI_VERSION}"       "grafana-promtail-${LOKI_VERSION}.tar.gz"
+pull_and_save "grafana/alloy"    "latest"                "grafana-alloy-latest.tar.gz"
 
 ###############################################################################
 # 2. node_exporter — Linux binaries
@@ -147,38 +147,30 @@ download \
   "windows_exporter ${WINDOWS_EXPORTER_VERSION}"
 
 ###############################################################################
-# 4. Promtail — Linux and Windows binaries
+# 4. Grafana Alloy — Linux and Windows binaries
 ###############################################################################
 echo
-info "=== Downloading Promtail binaries ==="
+info "=== Downloading Grafana Alloy binaries ==="
 
-PT_BASE_URL="https://github.com/grafana/loki/releases/download/v${PROMTAIL_VERSION}"
+ALLOY_BASE_URL="https://github.com/grafana/alloy/releases/download/v${ALLOY_VERSION}"
 
 # Linux amd64
 download \
-  "${PT_BASE_URL}/promtail-linux-amd64.zip" \
-  "${OUTPUT_DIR}/promtail/promtail-linux-amd64.zip" \
-  "Promtail ${PROMTAIL_VERSION} linux/amd64"
+  "${ALLOY_BASE_URL}/alloy-linux-amd64.zip" \
+  "${OUTPUT_DIR}/alloy/alloy-linux-amd64.zip" \
+  "Alloy ${ALLOY_VERSION} linux/amd64"
 
 # Linux arm64
 download \
-  "${PT_BASE_URL}/promtail-linux-arm64.zip" \
-  "${OUTPUT_DIR}/promtail/promtail-linux-arm64.zip" \
-  "Promtail ${PROMTAIL_VERSION} linux/arm64"
+  "${ALLOY_BASE_URL}/alloy-linux-arm64.zip" \
+  "${OUTPUT_DIR}/alloy/alloy-linux-arm64.zip" \
+  "Alloy ${ALLOY_VERSION} linux/arm64"
 
 # Windows amd64
 download \
-  "${PT_BASE_URL}/promtail-windows-amd64.exe.zip" \
-  "${OUTPUT_DIR}/promtail/promtail-windows-amd64.exe.zip" \
-  "Promtail ${PROMTAIL_VERSION} windows/amd64"
-
-# Extract Windows exe from zip
-if [[ -f "${OUTPUT_DIR}/promtail/promtail-windows-amd64.exe.zip" && ! -f "${OUTPUT_DIR}/promtail/promtail-windows-amd64.exe" ]]; then
-  info "Extracting Promtail Windows exe..."
-  unzip -q -o "${OUTPUT_DIR}/promtail/promtail-windows-amd64.exe.zip" \
-    -d "${OUTPUT_DIR}/promtail/"
-  success "Extracted promtail-windows-amd64.exe"
-fi
+  "${ALLOY_BASE_URL}/alloy-windows-amd64.exe.zip" \
+  "${OUTPUT_DIR}/alloy/alloy-windows-amd64.exe.zip" \
+  "Alloy ${ALLOY_VERSION} windows/amd64"
 
 ###############################################################################
 # 5. NSSM — Windows service manager
@@ -289,5 +281,5 @@ echo "       - Install Podman and podman-compose on the monitoring server"
 echo "       - Transfer and load container images"
 echo "       - Push all configuration files"
 echo "       - Start the observability stack"
-echo "       - Deploy node exporters and Promtail to all monitored hosts"
+echo "       - Deploy node exporters and Grafana Alloy to all monitored hosts"
 echo "─────────────────────────────────────────────────────────────────────"

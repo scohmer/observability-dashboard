@@ -126,7 +126,7 @@ if [[ "$DRY_RUN" == "false" && $LOADED -gt 0 ]]; then
   echo
   info "Loaded images:"
   ${CONTAINER_CMD} images --format "  {{.Repository}}:{{.Tag}}\t{{.Size}}" \
-    | grep -E "grafana|prometheus|loki|promtail" | sort || true
+    | grep -E "grafana|prometheus|loki|alloy" | sort || true
   echo
 fi
 

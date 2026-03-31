@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup.sh — Interactive setup for the observability dashboard
-# Generates inventory, prometheus config, docker-compose, and per-host promtail configs.
+# Generates inventory, prometheus config, docker-compose, and per-host Alloy config previews.
 set -euo pipefail
 
 ###############################################################################
@@ -54,7 +54,7 @@ cat <<'BANNER'
 BANNER
 echo -e "${NC}"
 echo "This wizard generates all configuration files for your observability stack."
-echo "Stack: Grafana · Prometheus · Loki · Promtail · Node Exporter"
+echo "Stack: Grafana · Prometheus · Loki · Alloy · Node Exporter"
 echo "------------------------------------------------------------------------"
 echo
 
@@ -119,11 +119,11 @@ info "Generating configuration files..."
 
 ANSIBLE_DIR="${SCRIPT_DIR}/ansible"
 CONFIG_DIR="${SCRIPT_DIR}/config"
-PROMTAIL_DIR="${CONFIG_DIR}/promtail"
+ALLOY_DIR="${CONFIG_DIR}/alloy"
 
 mkdir -p "${ANSIBLE_DIR}/inventory"
 mkdir -p "${CONFIG_DIR}/prometheus"
-mkdir -p "${PROMTAIL_DIR}"
+mkdir -p "${ALLOY_DIR}"
 
 # ── 4a. Ansible inventory ────────────────────────────────────────────────────
 INVENTORY_FILE="${ANSIBLE_DIR}/inventory/hosts.yml"
@@ -352,113 +352,92 @@ YAML
 
 success "Generated ${COMPOSE_FILE}"
 
-# ── 4d. Per-host Promtail configs ────────────────────────────────────────────
+# ── 4d. Per-host Alloy configs ────────────────────────────────────────────────
+# NOTE: These are reference copies only. The authoritative config is deployed
+# by the alloy_linux/alloy_windows Ansible roles using Jinja2 templates.
+# These files give the admin a preview of what will be deployed to each host.
 for i in $(seq 1 "$NUM_HOSTS"); do
-  PTAIL_FILE="${PROMTAIL_DIR}/promtail-${HOST_NAMES[$i]}.yml"
+  ALLOY_FILE="${ALLOY_DIR}/config-${HOST_NAMES[$i]}.alloy"
   if [[ "${HOST_OS[$i]}" == "linux" ]]; then
-    cat > "$PTAIL_FILE" <<YAML
----
-server:
-  http_listen_port: 9080
-  grpc_listen_port: 0
+    cat > "$ALLOY_FILE" <<ALLOY
+// Grafana Alloy configuration preview for ${HOST_NAMES[$i]} (Linux)
+// Deployed by: ansible/playbooks/deploy-alloy.yml
 
-positions:
-  filename: /tmp/positions-${HOST_NAMES[$i]}.yaml
+loki.write "default" {
+  endpoint {
+    url = "http://${MONITORING_HOST}:${LOKI_PORT}/loki/api/v1/push"
+  }
+}
 
-clients:
-  - url: http://${MONITORING_HOST}:${LOKI_PORT}/loki/api/v1/push
+local.file_match "varlog" {
+  path_targets = [
+    { __path__ = "/var/log/*.log",    job = "varlog", host = "${HOST_NAMES[$i]}" },
+    { __path__ = "/var/log/**/*.log", job = "varlog", host = "${HOST_NAMES[$i]}" },
+  ]
+}
 
-scrape_configs:
+loki.source.file "varlog" {
+  targets    = local.file_match.varlog.targets
+  forward_to = [loki.write.default.receiver]
+}
 
-  - job_name: varlog
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: varlog
-          host: ${HOST_NAMES[$i]}
-          __path__: /var/log/*.log
+loki.source.journal "journal" {
+  forward_to = [loki.write.default.receiver]
+  max_age    = "12h"
+  labels = { job = "systemd-journal", host = "${HOST_NAMES[$i]}" }
+  relabel_rules = loki.relabel.journal.rules
+}
 
-  - job_name: varlog-recursive
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: varlog
-          host: ${HOST_NAMES[$i]}
-          __path__: /var/log/**/*.log
-
-  - job_name: journal
-    journal:
-      max_age: 12h
-      labels:
-        job: systemd-journal
-        host: ${HOST_NAMES[$i]}
-    relabel_configs:
-      - source_labels: ['__journal__systemd_unit']
-        target_label: 'unit'
-      - source_labels: ['__journal__hostname']
-        target_label: 'hostname'
-YAML
+loki.relabel "journal" {
+  forward_to = []
+  rule { source_labels = ["__journal__systemd_unit"] target_label = "unit" }
+  rule { source_labels = ["__journal__hostname"]     target_label = "hostname" }
+  rule { source_labels = ["__journal_priority_keyword"] target_label = "level" }
+}
+ALLOY
   else
-    cat > "$PTAIL_FILE" <<YAML
----
-server:
-  http_listen_port: 9080
-  grpc_listen_port: 0
+    cat > "$ALLOY_FILE" <<ALLOY
+// Grafana Alloy configuration preview for ${HOST_NAMES[$i]} (Windows)
+// Deployed by: ansible/playbooks/deploy-alloy.yml
 
-positions:
-  filename: C:\\ProgramData\\promtail\\positions-${HOST_NAMES[$i]}.yaml
+loki.write "default" {
+  endpoint {
+    url = "http://${MONITORING_HOST}:${LOKI_PORT}/loki/api/v1/push"
+  }
+}
 
-clients:
-  - url: http://${MONITORING_HOST}:${LOKI_PORT}/loki/api/v1/push
+loki.source.windowsevent "application" {
+  eventlog_name = "Application"
+  use_incoming_timestamp = false
+  forward_to = [loki.write.default.receiver]
+  labels = { job = "windows-event-log", host = "${HOST_NAMES[$i]}", log_type = "application" }
+}
 
-scrape_configs:
+loki.source.windowsevent "system" {
+  eventlog_name = "System"
+  use_incoming_timestamp = false
+  forward_to = [loki.write.default.receiver]
+  labels = { job = "windows-event-log", host = "${HOST_NAMES[$i]}", log_type = "system" }
+}
 
-  - job_name: windows-application
-    windows_events:
-      use_incoming_timestamp: false
-      bookmark_path: C:\\ProgramData\\promtail\\bookmark-app.xml
-      eventlog_name: Application
-      xpath_query: '*'
-      labels:
-        job: windows-event-log
-        host: ${HOST_NAMES[$i]}
-        log_type: application
+loki.source.windowsevent "security" {
+  eventlog_name = "Security"
+  use_incoming_timestamp = false
+  forward_to = [loki.write.default.receiver]
+  labels = { job = "windows-event-log", host = "${HOST_NAMES[$i]}", log_type = "security" }
+}
 
-  - job_name: windows-system
-    windows_events:
-      use_incoming_timestamp: false
-      bookmark_path: C:\\ProgramData\\promtail\\bookmark-sys.xml
-      eventlog_name: System
-      xpath_query: '*'
-      labels:
-        job: windows-event-log
-        host: ${HOST_NAMES[$i]}
-        log_type: system
+local.file_match "iis" {
+  path_targets = [{ __path__ = "C:\\\\inetpub\\\\logs\\\\LogFiles\\\\**\\\\*.log", job = "iis", host = "${HOST_NAMES[$i]}" }]
+}
 
-  - job_name: windows-security
-    windows_events:
-      use_incoming_timestamp: false
-      bookmark_path: C:\\ProgramData\\promtail\\bookmark-sec.xml
-      eventlog_name: Security
-      xpath_query: '*'
-      labels:
-        job: windows-event-log
-        host: ${HOST_NAMES[$i]}
-        log_type: security
-
-  - job_name: iis-logs
-    static_configs:
-      - targets:
-          - localhost
-        labels:
-          job: iis
-          host: ${HOST_NAMES[$i]}
-          __path__: C:\\inetpub\\logs\\LogFiles\\**\\*.log
-YAML
+loki.source.file "iis" {
+  targets    = local.file_match.iis.targets
+  forward_to = [loki.write.default.receiver]
+}
+ALLOY
   fi
-  success "Generated ${PTAIL_FILE}"
+  success "Generated ${ALLOY_FILE}"
 done
 
 ###############################################################################
@@ -502,16 +481,16 @@ echo "  ${INVENTORY_FILE}"
 echo "  ${PROM_FILE}"
 echo "  ${COMPOSE_FILE}"
 for i in $(seq 1 "$NUM_HOSTS"); do
-  echo "  ${PROMTAIL_DIR}/promtail-${HOST_NAMES[$i]}.yml"
+  echo "  ${ALLOY_DIR}/config-${HOST_NAMES[$i]}.alloy  (preview)"
 done
 echo
 echo "Next steps:"
 echo "  1. Review generated configs in ./config/ and ./ansible/inventory/"
 echo "  2. Deploy the full stack via Ansible (images + config + start):"
 echo "       ansible-playbook ansible/playbooks/deploy-monitoring-server.yml"
-echo "  3. Deploy node exporters and Promtail to monitored hosts:"
+echo "  3. Deploy node exporters and Alloy to monitored hosts:"
 echo "       ansible-playbook ansible/playbooks/deploy-node-exporter.yml"
-echo "       ansible-playbook ansible/playbooks/deploy-promtail.yml"
+echo "       ansible-playbook ansible/playbooks/deploy-alloy.yml"
 echo "  4. Open Grafana at:  http://${MONITORING_HOST}:${GRAFANA_PORT}"
 echo
 
@@ -525,8 +504,8 @@ if [[ "$RUN_ANSIBLE" == "true" ]]; then
   ansible-playbook playbooks/deploy-monitoring-server.yml
   info "Step 2/3: Deploying node exporters to monitored hosts..."
   ansible-playbook playbooks/deploy-node-exporter.yml
-  info "Step 3/3: Deploying Promtail to monitored hosts..."
-  ansible-playbook playbooks/deploy-promtail.yml
+  info "Step 3/3: Deploying Grafana Alloy to monitored hosts..."
+  ansible-playbook playbooks/deploy-alloy.yml
   success "Ansible deployment complete."
   echo
   echo "  Grafana is available at: http://${MONITORING_HOST}:${GRAFANA_PORT}"

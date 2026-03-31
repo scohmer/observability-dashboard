@@ -1,0 +1,35 @@
+[Unit]
+Description=Grafana Alloy
+Documentation=https://grafana.com/docs/alloy/
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User={{ alloy_user }}
+Group={{ alloy_group }}
+ExecStart={{ alloy_bin_dir }}/alloy run \
+  --storage.path={{ alloy_data_dir }} \
+  --server.http.listen-addr=0.0.0.0:{{ alloy_port }} \
+  {{ alloy_config_dir }}/config.alloy
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ReadWritePaths={{ alloy_data_dir }}
+ReadOnlyPaths=/var/log /run/log/journal /run/systemd/journal
+SupplementaryGroups=systemd-journal adm
+
+[Install]
+WantedBy=multi-user.target

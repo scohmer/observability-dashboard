@@ -1,0 +1,88 @@
+// Grafana Alloy configuration for the monitoring server itself.
+// This runs inside the Alloy container defined in docker-compose.yml.
+// It ships the monitoring server's own logs to the Loki container.
+//
+// Container logs (Grafana, Prometheus, Loki) are captured automatically via
+// the systemd journal because docker-compose.yml uses logging driver: journald.
+
+// ── Loki output ───────────────────────────────────────────────────────────────
+loki.write "default" {
+  endpoint {
+    // "loki" resolves via the Podman/Docker internal network
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// ── /var/log file collection ──────────────────────────────────────────────────
+local.file_match "varlog" {
+  path_targets = [
+    {
+      __path__ = "/var/log/*.log",
+      job      = "varlog",
+      host     = "monitoring-server",
+    },
+    {
+      __path__ = "/var/log/**/*.log",
+      job      = "varlog",
+      host     = "monitoring-server",
+    },
+  ]
+}
+
+loki.source.file "varlog" {
+  targets    = local.file_match.varlog.targets
+  forward_to = [loki.write.default.receiver]
+}
+
+// ── systemd journal ───────────────────────────────────────────────────────────
+// Captures all host and container logs (containers log via journald driver).
+loki.source.journal "journal" {
+  forward_to = [loki.write.default.receiver]
+  max_age    = "12h"
+  labels = {
+    job  = "systemd-journal",
+    host = "monitoring-server",
+  }
+  relabel_rules = loki.relabel.journal.rules
+}
+
+loki.relabel "journal" {
+  forward_to = []
+
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "hostname"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "level"
+  }
+  // Podman/journald container identification fields
+  rule {
+    source_labels = ["__journal__container_name"]
+    target_label  = "container_name"
+  }
+  rule {
+    source_labels = ["__journal__tag"]
+    target_label  = "container_tag"
+  }
+}
+
+// ── Self-monitoring ───────────────────────────────────────────────────────────
+prometheus.exporter.self "alloy" {}
+
+prometheus.scrape "alloy_self" {
+  targets    = prometheus.exporter.self.alloy.targets
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    // "prometheus" resolves via the Podman/Docker internal network
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}

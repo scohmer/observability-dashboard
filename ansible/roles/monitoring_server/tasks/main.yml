@@ -205,6 +205,15 @@
   retries: "{{ (stack_startup_timeout | int) // 5 }}"
   delay: 5
 
+- name: Wait for Alloy to report ready
+  ansible.builtin.uri:
+    url: "http://localhost:12345/-/ready"
+    status_code: 200
+  register: alloy_health
+  until: alloy_health.status == 200
+  retries: "{{ (stack_startup_timeout | int) // 5 }}"
+  delay: 5
+
 - name: Observability stack is up
   ansible.builtin.debug:
     msg:

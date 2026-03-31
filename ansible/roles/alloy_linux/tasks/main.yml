@@ -1,0 +1,187 @@
+---
+# tasks/main.yml — alloy_linux role
+
+# ---------------------------------------------------------------------------
+# Pre-flight
+# ---------------------------------------------------------------------------
+- name: Assert supported OS family
+  ansible.builtin.assert:
+    that: ansible_os_family in ['RedHat', 'Debian', 'Suse']
+    fail_msg: "Unsupported OS family: {{ ansible_os_family }}"
+
+- name: Install unzip (required to extract Alloy)
+  ansible.builtin.package:
+    name: unzip
+    state: present
+
+# ---------------------------------------------------------------------------
+# User, group, and directories
+# ---------------------------------------------------------------------------
+- name: Create alloy system group
+  ansible.builtin.group:
+    name: "{{ alloy_group }}"
+    system: true
+    state: present
+
+- name: Create alloy system user
+  ansible.builtin.user:
+    name: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    shell: /sbin/nologin
+    system: true
+    create_home: false
+    home: "{{ alloy_data_dir }}"
+    comment: "Grafana Alloy service account"
+    state: present
+
+- name: Add alloy user to log-reading groups
+  ansible.builtin.user:
+    name: "{{ alloy_user }}"
+    groups: "{{ item }}"
+    append: true
+  loop:
+    - systemd-journal
+    - adm
+  ignore_errors: true   # groups may not exist on all distros
+
+- name: Create Alloy configuration directory
+  ansible.builtin.file:
+    path: "{{ alloy_config_dir }}"
+    state: directory
+    owner: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    mode: "0750"
+
+- name: Create Alloy data directory
+  ansible.builtin.file:
+    path: "{{ alloy_data_dir }}"
+    state: directory
+    owner: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    mode: "0755"
+
+- name: Create temporary installation directory
+  ansible.builtin.file:
+    path: "{{ alloy_tmp_dir }}"
+    state: directory
+    mode: "0755"
+
+# ---------------------------------------------------------------------------
+# Binary installation — offline-first strategy
+# ---------------------------------------------------------------------------
+- name: Check if offline Alloy archive exists on control node
+  ansible.builtin.stat:
+    path: "{{ alloy_offline_src }}"
+  register: offline_archive
+  delegate_to: localhost
+  become: false
+
+- name: "[OFFLINE] Copy Alloy archive from offline-packages to target"
+  ansible.builtin.copy:
+    src: "{{ alloy_offline_src }}"
+    dest: "{{ alloy_tmp_dir }}/{{ alloy_archive_name }}"
+    mode: "0644"
+  when: offline_archive.stat.exists
+
+- name: "[ONLINE] Download Alloy archive from GitHub"
+  ansible.builtin.get_url:
+    url: "{{ alloy_download_url }}"
+    dest: "{{ alloy_tmp_dir }}/{{ alloy_archive_name }}"
+    mode: "0644"
+    timeout: 120
+  when: not offline_archive.stat.exists
+
+- name: Extract Alloy binary from archive
+  ansible.builtin.unarchive:
+    src: "{{ alloy_tmp_dir }}/{{ alloy_archive_name }}"
+    dest: "{{ alloy_tmp_dir }}"
+    remote_src: true
+
+- name: Install Alloy binary to {{ alloy_bin_dir }}
+  ansible.builtin.copy:
+    src: "{{ alloy_tmp_dir }}/{{ alloy_binary_name }}"
+    dest: "{{ alloy_bin_dir }}/alloy"
+    owner: root
+    group: root
+    mode: "0755"
+    remote_src: true
+  notify: Restart alloy
+
+- name: Clean up temporary installation directory
+  ansible.builtin.file:
+    path: "{{ alloy_tmp_dir }}"
+    state: absent
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+- name: Deploy Alloy configuration file
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_dir }}/config.alloy"
+    owner: "{{ alloy_user }}"
+    group: "{{ alloy_group }}"
+    mode: "0640"
+  notify: Restart alloy
+
+# ---------------------------------------------------------------------------
+# Systemd service
+# ---------------------------------------------------------------------------
+- name: Deploy Alloy systemd unit file
+  ansible.builtin.template:
+    src: alloy.service.j2
+    dest: /etc/systemd/system/alloy.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd
+    - Restart alloy
+
+- name: Enable and start Alloy service
+  ansible.builtin.systemd:
+    name: "{{ alloy_service_name }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+
+# ---------------------------------------------------------------------------
+# Firewall
+# ---------------------------------------------------------------------------
+- name: Open Alloy port — firewalld
+  ansible.posix.firewalld:
+    port: "{{ alloy_port }}/tcp"
+    permanent: true
+    state: enabled
+    immediate: true
+  when:
+    - alloy_manage_firewall | bool
+    - ansible_os_family == "RedHat"
+  ignore_errors: true
+
+- name: Open Alloy port — ufw
+  community.general.ufw:
+    rule: allow
+    port: "{{ alloy_port }}"
+    proto: tcp
+  when:
+    - alloy_manage_firewall | bool
+    - ansible_os_family == "Debian"
+  ignore_errors: true
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+- name: Wait for Alloy HTTP port to be open
+  ansible.builtin.wait_for:
+    port: "{{ alloy_port }}"
+    timeout: 30
+
+- name: Verify Alloy service is active
+  ansible.builtin.service_facts:
+
+- name: Assert Alloy service is running
+  ansible.builtin.assert:
+    that: "'alloy.service' in ansible_facts.services and ansible_facts.services['alloy.service']['state'] == 'running'"
+    fail_msg: "Alloy service is not running on {{ inventory_hostname }}"
+    success_msg: "Alloy is running on {{ inventory_hostname }}:{{ alloy_port }}"
