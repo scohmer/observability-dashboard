@@ -1,0 +1,262 @@
+---
+# node-alerts.yml — Prometheus alerting rules for host monitoring
+groups:
+  - name: node.availability
+    interval: 30s
+    rules:
+
+      - alert: InstanceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Instance {{ $labels.instance }} is down"
+          description: >-
+            Prometheus has been unable to scrape {{ $labels.job }}/{{ $labels.instance }}
+            for more than 2 minutes. The node exporter or the host itself may be
+            unreachable.
+          runbook: "Check host power state, network connectivity, and node_exporter/windows_exporter service."
+
+      - alert: NodeExporterMissing
+        expr: absent(up{job=~"node-linux|node-windows"})
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No node exporter targets found"
+          description: >-
+            There are no active scrape targets in the node-linux or node-windows jobs.
+            Verify your Prometheus configuration and that agents are deployed.
+
+  # ── CPU ───────────────────────────────────────────────────────────────────
+  - name: node.cpu
+    rules:
+
+      - alert: HighCPUUsage
+        expr: >-
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: >-
+            CPU utilization on {{ $labels.instance }} has been above 85%
+            for the past 10 minutes (current: {{ $value | humanize }}%).
+          runbook: "Identify top processes with `top` or `ps aux`. Consider scaling or load balancing."
+
+      - alert: CriticalCPUUsage
+        expr: >-
+          100 - (avg by(instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 95
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical CPU usage on {{ $labels.instance }}"
+          description: >-
+            CPU utilization on {{ $labels.instance }} has been above 95%
+            for the past 5 minutes (current: {{ $value | humanize }}%).
+
+      - alert: HighCPUUsageWindows
+        expr: >-
+          100 - (avg by(instance) (rate(windows_cpu_time_total{mode="idle"}[5m])) * 100) > 85
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on Windows host {{ $labels.instance }}"
+          description: >-
+            CPU utilization on {{ $labels.instance }} has been above 85%
+            for the past 10 minutes (current: {{ $value | humanize }}%).
+
+  # ── Memory ────────────────────────────────────────────────────────────────
+  - name: node.memory
+    rules:
+
+      - alert: HighMemoryUsage
+        expr: >-
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: >-
+            Memory utilization on {{ $labels.instance }} has been above 90%
+            for the past 10 minutes (current: {{ $value | humanize }}%).
+          runbook: "Check for memory leaks or consider adding more RAM."
+
+      - alert: CriticalMemoryUsage
+        expr: >-
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 97
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical memory usage on {{ $labels.instance }}"
+          description: >-
+            Memory utilization on {{ $labels.instance }} has been above 97%
+            for the past 5 minutes (current: {{ $value | humanize }}%).
+
+      - alert: HighMemoryUsageWindows
+        expr: >-
+          (1 - (windows_os_physical_memory_free_bytes / windows_cs_physical_memory_bytes)) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on Windows host {{ $labels.instance }}"
+          description: >-
+            Memory utilization on {{ $labels.instance }} has been above 90%
+            for the past 10 minutes (current: {{ $value | humanize }}%).
+
+  # ── Disk ─────────────────────────────────────────────────────────────────
+  - name: node.disk
+    rules:
+
+      - alert: DiskSpaceWarning
+        expr: >-
+          (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"}
+               / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"})) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space warning on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: >-
+            Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is
+            {{ $value | humanize }}% full. Consider cleaning up or expanding the disk.
+
+      - alert: DiskSpaceCritical
+        expr: >-
+          (1 - (node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"}
+               / node_filesystem_size_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"})) * 100 > 90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk space critical on {{ $labels.instance }} ({{ $labels.mountpoint }})"
+          description: >-
+            Filesystem {{ $labels.mountpoint }} on {{ $labels.instance }} is
+            {{ $value | humanize }}% full. Immediate action required.
+
+      - alert: DiskWillFillIn4Hours
+        expr: >-
+          predict_linear(node_filesystem_avail_bytes{fstype!~"tmpfs|fuse.lxcfs|squashfs|vfat"}[1h], 4 * 3600) < 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk on {{ $labels.instance }}:{{ $labels.mountpoint }} will fill within 4 hours"
+          description: >-
+            Based on current growth rate, filesystem {{ $labels.mountpoint }} on
+            {{ $labels.instance }} is predicted to run out of space within 4 hours.
+
+      - alert: DiskSpaceWarningWindows
+        expr: >-
+          (1 - (windows_logical_disk_free_bytes / windows_logical_disk_size_bytes)) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk space warning on Windows host {{ $labels.instance }} ({{ $labels.volume }})"
+          description: >-
+            Volume {{ $labels.volume }} on {{ $labels.instance }} is
+            {{ $value | humanize }}% full.
+
+      - alert: DiskIOSaturation
+        expr: >-
+          rate(node_disk_io_time_seconds_total[5m]) > 0.9
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Disk I/O saturation on {{ $labels.instance }} device {{ $labels.device }}"
+          description: >-
+            Disk {{ $labels.device }} on {{ $labels.instance }} is spending more than
+            90% of its time on I/O operations (current: {{ $value | humanize }}).
+
+  # ── System Load ───────────────────────────────────────────────────────────
+  - name: node.load
+    rules:
+
+      - alert: HighSystemLoad
+        expr: >-
+          node_load1 / on(instance) count without(cpu, mode)(node_cpu_seconds_total{mode="idle"}) > 2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High system load on {{ $labels.instance }}"
+          description: >-
+            The 1-minute load average on {{ $labels.instance }} is more than
+            2x the number of CPU cores (current load: {{ $value | humanize }}).
+
+      - alert: CriticalSystemLoad
+        expr: >-
+          node_load1 / on(instance) count without(cpu, mode)(node_cpu_seconds_total{mode="idle"}) > 5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Critical system load on {{ $labels.instance }}"
+          description: >-
+            The 1-minute load average on {{ $labels.instance }} is more than
+            5x the number of CPU cores (current load: {{ $value | humanize }}).
+
+  # ── Network ───────────────────────────────────────────────────────────────
+  - name: node.network
+    rules:
+
+      - alert: NetworkInterfaceDown
+        expr: >-
+          node_network_up{device!~"lo|docker.*|veth.*|br-.*|virbr.*|vmnet.*"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Network interface {{ $labels.device }} is down on {{ $labels.instance }}"
+          description: >-
+            Network interface {{ $labels.device }} on {{ $labels.instance }}
+            has been down for more than 2 minutes.
+
+      - alert: HighNetworkErrors
+        expr: >-
+          rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High network error rate on {{ $labels.instance }} ({{ $labels.device }})"
+          description: >-
+            Network interface {{ $labels.device }} on {{ $labels.instance }}
+            is experiencing more than 10 errors/second.
+
+  # ── System ────────────────────────────────────────────────────────────────
+  - name: node.system
+    rules:
+
+      - alert: SystemReboot
+        expr: >-
+          (node_time_seconds - node_boot_time_seconds) < 300
+        for: 0m
+        labels:
+          severity: info
+        annotations:
+          summary: "{{ $labels.instance }} rebooted recently"
+          description: >-
+            Host {{ $labels.instance }} rebooted less than 5 minutes ago.
+            Uptime: {{ $value | humanizeDuration }}.
+
+      - alert: ClockSkew
+        expr: >-
+          abs(node_timex_offset_seconds) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Clock skew detected on {{ $labels.instance }}"
+          description: >-
+            The system clock on {{ $labels.instance }} is out of sync by
+            {{ $value | humanize }} seconds. Check NTP configuration.

@@ -1,0 +1,8 @@
+---
+# handlers/main.yml — node_exporter_windows role
+
+- name: Restart windows_exporter
+  ansible.windows.win_service:
+    name: windows_exporter
+    state: restarted
+  listen: Restart windows_exporter

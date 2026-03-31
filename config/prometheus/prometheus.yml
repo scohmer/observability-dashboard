@@ -1,0 +1,70 @@
+---
+# prometheus.yml — Default Prometheus configuration
+# This file is overwritten by setup.sh with environment-specific scrape targets.
+# Edit this file directly if you are not using setup.sh.
+
+global:
+  scrape_interval: 15s          # How frequently to scrape targets
+  scrape_timeout: 10s           # Timeout for each scrape
+  evaluation_interval: 15s      # How often to evaluate alerting rules
+  external_labels:
+    monitor: 'observability-dashboard'
+    environment: 'production'
+
+# Alertmanager configuration (configure if you add Alertmanager to the stack)
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: []
+          # - alertmanager:9093
+
+# Load alerting rules from the alerts/ directory
+rule_files:
+  - /etc/prometheus/alerts/*.yml
+
+# ── Scrape configurations ─────────────────────────────────────────────────────
+
+scrape_configs:
+
+  # Self-monitoring — Prometheus scrapes itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+        labels:
+          instance: 'prometheus'
+
+  # Loki internal metrics
+  - job_name: 'loki'
+    static_configs:
+      - targets: ['loki:3100']
+        labels:
+          instance: 'loki'
+
+  # Grafana internal metrics
+  - job_name: 'grafana'
+    static_configs:
+      - targets: ['grafana:3000']
+        labels:
+          instance: 'grafana'
+
+  # ── Linux hosts (node_exporter) ───────────────────────────────────────────
+  # Add your Linux hosts here, or let setup.sh generate this section.
+  - job_name: 'node-linux'
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          # - '192.168.1.10:9100'  # example-linux-host
+        labels:
+          os: linux
+
+  # ── Windows hosts (windows_exporter) ─────────────────────────────────────
+  # Add your Windows hosts here, or let setup.sh generate this section.
+  - job_name: 'node-windows'
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          # - '192.168.1.20:9182'  # example-windows-host
+        labels:
+          os: windows

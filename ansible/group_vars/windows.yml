@@ -1,0 +1,37 @@
+---
+# group_vars/windows.yml
+# Variables that apply to all hosts in the [windows] group.
+
+# WinRM connection settings
+ansible_connection: winrm
+ansible_winrm_transport: ntlm
+ansible_port: 5985
+ansible_winrm_scheme: http
+ansible_winrm_server_cert_validation: ignore
+
+# WinRM operation timeouts (seconds)
+ansible_winrm_operation_timeout_sec: 60
+ansible_winrm_read_timeout_sec: 70
+
+# PowerShell as the default shell
+ansible_shell_type: powershell
+
+# Do not use become on Windows (use admin credentials directly)
+become: false
+
+# Python interpreter on the control node for Windows tasks
+ansible_python_interpreter: /usr/bin/python3
+
+# ── WinRM setup hints ────────────────────────────────────────────────────────
+# Run the following on each Windows target to enable WinRM:
+#
+#   Set-ExecutionPolicy RemoteSigned -Scope LocalMachine -Force
+#   winrm quickconfig -q
+#   winrm set winrm/config/service/auth '@{Negotiate="true"}'
+#   winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+#   Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+#   Restart-Service WinRM
+#
+# For domain-joined machines, NTLM auth should work automatically.
+# For workgroup machines, add the control node IP to TrustedHosts:
+#   Set-Item WSMan:\localhost\Client\TrustedHosts -Value "CONTROL_NODE_IP"

@@ -1,0 +1,153 @@
+---
+# tasks/main.yml — promtail_windows role
+
+# ---------------------------------------------------------------------------
+# Pre-flight
+# ---------------------------------------------------------------------------
+- name: Assert target is Windows
+  ansible.builtin.assert:
+    that: ansible_os_family == "Windows"
+    fail_msg: "This role only supports Windows targets."
+
+# ---------------------------------------------------------------------------
+# Directory setup
+# ---------------------------------------------------------------------------
+- name: Create Promtail installation directory
+  ansible.windows.win_file:
+    path: "{{ promtail_install_dir }}"
+    state: directory
+
+- name: Create Promtail data/config directory
+  ansible.windows.win_file:
+    path: "{{ promtail_config_dir }}"
+    state: directory
+
+# ---------------------------------------------------------------------------
+# NSSM delivery (service manager)
+# ---------------------------------------------------------------------------
+- name: Check if offline NSSM exists on control node
+  ansible.builtin.stat:
+    path: "{{ nssm_offline_src }}"
+  register: offline_nssm
+  delegate_to: localhost
+  become: false
+
+- name: "[OFFLINE] Copy NSSM from offline-packages"
+  ansible.windows.win_copy:
+    src: "{{ nssm_offline_src }}"
+    dest: "{{ nssm_install_path }}"
+  when: offline_nssm.stat.exists
+
+- name: "[ONLINE] Download NSSM from nssm.cc"
+  ansible.windows.win_get_url:
+    url: "https://nssm.cc/release/nssm-2.24.zip"
+    dest: 'C:\Windows\Temp\nssm.zip'
+    timeout: 60
+  when: not offline_nssm.stat.exists
+
+- name: "[ONLINE] Extract NSSM binary"
+  community.windows.win_unzip:
+    src: 'C:\Windows\Temp\nssm.zip'
+    dest: 'C:\Windows\Temp\nssm'
+    creates: 'C:\Windows\Temp\nssm\nssm-2.24\win64\nssm.exe'
+  when: not offline_nssm.stat.exists
+
+- name: "[ONLINE] Copy NSSM to System32"
+  ansible.windows.win_copy:
+    src: 'C:\Windows\Temp\nssm\nssm-2.24\win64\nssm.exe'
+    dest: "{{ nssm_install_path }}"
+    remote_src: true
+  when: not offline_nssm.stat.exists
+
+# ---------------------------------------------------------------------------
+# Promtail binary delivery — offline-first
+# ---------------------------------------------------------------------------
+- name: Check if offline Promtail exe exists on control node
+  ansible.builtin.stat:
+    path: "{{ promtail_offline_src }}"
+  register: offline_promtail
+  delegate_to: localhost
+  become: false
+
+- name: "[OFFLINE] Copy Promtail exe from offline-packages"
+  ansible.windows.win_copy:
+    src: "{{ promtail_offline_src }}"
+    dest: "{{ promtail_install_dir }}\\promtail.exe"
+  when: offline_promtail.stat.exists
+  notify: Restart promtail windows
+
+- name: "[ONLINE] Download Promtail exe from GitHub"
+  ansible.windows.win_get_url:
+    url: "{{ promtail_download_url }}"
+    dest: "{{ promtail_install_dir }}\\promtail.exe"
+    timeout: 120
+  when: not offline_promtail.stat.exists
+  notify: Restart promtail windows
+
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+- name: Deploy Promtail configuration file
+  ansible.windows.win_template:
+    src: promtail-config.yml.j2
+    dest: "{{ promtail_config_dir }}\\promtail-config.yml"
+  notify: Restart promtail windows
+
+# ---------------------------------------------------------------------------
+# Windows Service via NSSM
+# ---------------------------------------------------------------------------
+- name: Check if Promtail service exists
+  ansible.windows.win_service:
+    name: "{{ promtail_service_name }}"
+  register: promtail_svc
+  ignore_errors: true
+
+- name: Install Promtail as a Windows service via NSSM
+  ansible.windows.win_shell: |
+    nssm.exe install "{{ promtail_service_name }}" "{{ promtail_install_dir }}\promtail.exe"
+    nssm.exe set "{{ promtail_service_name }}" AppParameters "-config.file={{ promtail_config_dir }}\promtail-config.yml"
+    nssm.exe set "{{ promtail_service_name }}" DisplayName "Grafana Promtail Log Agent"
+    nssm.exe set "{{ promtail_service_name }}" Description "Ships logs to Grafana Loki"
+    nssm.exe set "{{ promtail_service_name }}" Start SERVICE_AUTO_START
+    nssm.exe set "{{ promtail_service_name }}" AppStdout "{{ promtail_config_dir }}\promtail-stdout.log"
+    nssm.exe set "{{ promtail_service_name }}" AppStderr "{{ promtail_config_dir }}\promtail-stderr.log"
+    nssm.exe set "{{ promtail_service_name }}" AppRotateFiles 1
+    nssm.exe set "{{ promtail_service_name }}" AppRotateBytes 10485760
+  when: not (promtail_svc.exists | default(false))
+
+- name: Ensure Promtail service is set to auto-start
+  ansible.windows.win_service:
+    name: "{{ promtail_service_name }}"
+    start_mode: auto
+
+- name: Ensure Promtail service is running
+  ansible.windows.win_service:
+    name: "{{ promtail_service_name }}"
+    state: started
+
+# ---------------------------------------------------------------------------
+# Windows Firewall
+# ---------------------------------------------------------------------------
+- name: Allow Promtail HTTP port through Windows Firewall
+  community.windows.win_firewall_rule:
+    name: "{{ promtail_fw_rule_name }}"
+    localport: "{{ promtail_port }}"
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: true
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+- name: Query Promtail service state
+  ansible.windows.win_service:
+    name: "{{ promtail_service_name }}"
+  register: final_svc_state
+
+- name: Assert Promtail is running
+  ansible.builtin.assert:
+    that: final_svc_state.state == "running"
+    fail_msg: "Promtail service is not running on {{ inventory_hostname }}"
+    success_msg: "Promtail is running on {{ inventory_hostname }}"

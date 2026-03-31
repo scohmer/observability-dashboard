@@ -1,0 +1,145 @@
+---
+# tasks/main.yml — node_exporter_windows role
+
+# ---------------------------------------------------------------------------
+# Pre-flight
+# ---------------------------------------------------------------------------
+- name: Assert target is Windows
+  ansible.builtin.assert:
+    that: ansible_os_family == "Windows"
+    fail_msg: "This role only supports Windows targets."
+
+- name: Gather Windows facts
+  ansible.windows.win_shell: |
+    [System.Environment]::OSVersion.VersionString
+  register: windows_version
+  changed_when: false
+
+- name: Display target OS version
+  ansible.builtin.debug:
+    msg: "Deploying windows_exporter {{ windows_exporter_version }} to {{ inventory_hostname }} ({{ windows_version.stdout | trim }})"
+
+# ---------------------------------------------------------------------------
+# Check for existing installation
+# ---------------------------------------------------------------------------
+- name: Check if windows_exporter service already exists
+  ansible.windows.win_service:
+    name: "{{ windows_exporter_service_name }}"
+  register: existing_service
+  ignore_errors: true
+
+- name: Check installed version (if service exists)
+  ansible.windows.win_shell: |
+    $svc = Get-WmiObject Win32_Service -Filter "Name='{{ windows_exporter_service_name }}'"
+    if ($svc) {
+      $path = ($svc.PathName -split '"')[1]
+      if (Test-Path $path) {
+        (Get-Item $path).VersionInfo.FileVersion
+      } else { "unknown" }
+    } else { "not_installed" }
+  register: installed_version
+  changed_when: false
+  when: existing_service is defined and existing_service.exists | default(false)
+
+# ---------------------------------------------------------------------------
+# Binary / MSI delivery — offline-first strategy
+# ---------------------------------------------------------------------------
+- name: Check if offline MSI exists on control node
+  ansible.builtin.stat:
+    path: "{{ windows_exporter_offline_src }}"
+  register: offline_msi
+  delegate_to: localhost
+  become: false
+
+- name: "[OFFLINE] Copy MSI from offline-packages to Windows host"
+  ansible.windows.win_copy:
+    src: "{{ windows_exporter_offline_src }}"
+    dest: "{{ windows_exporter_tmp_path }}"
+  when: offline_msi.stat.exists
+
+- name: "[ONLINE] Download windows_exporter MSI from GitHub"
+  ansible.windows.win_get_url:
+    url: "{{ windows_exporter_download_url }}"
+    dest: "{{ windows_exporter_tmp_path }}"
+    timeout: 120
+  when: not offline_msi.stat.exists
+
+# ---------------------------------------------------------------------------
+# Installation
+# ---------------------------------------------------------------------------
+- name: Install windows_exporter via MSI
+  ansible.windows.win_package:
+    path: "{{ windows_exporter_tmp_path }}"
+    product_id: "windows_exporter"
+    state: present
+    arguments: >-
+      /quiet
+      ENABLED_COLLECTORS="{{ windows_exporter_collectors }}"
+      LISTEN_PORT="{{ windows_exporter_port }}"
+      METRICS_PATH="{{ windows_exporter_metrics_path }}"
+      TEXTFILE_DIR="C:\ProgramData\windows_exporter\textfile_inputs"
+    wait: true
+  register: install_result
+  notify: Restart windows_exporter
+
+- name: Clean up temporary MSI file
+  ansible.windows.win_file:
+    path: "{{ windows_exporter_tmp_path }}"
+    state: absent
+
+# ---------------------------------------------------------------------------
+# Windows Firewall
+# ---------------------------------------------------------------------------
+- name: Create Windows Firewall inbound rule for windows_exporter
+  community.windows.win_firewall_rule:
+    name: "{{ windows_exporter_fw_rule_name }}"
+    localport: "{{ windows_exporter_port }}"
+    action: allow
+    direction: in
+    protocol: tcp
+    state: present
+    enabled: true
+    description: "Allows Prometheus to scrape windows_exporter metrics"
+    profiles: Domain,Private,Public
+
+# ---------------------------------------------------------------------------
+# Service management
+# ---------------------------------------------------------------------------
+- name: Ensure windows_exporter service is set to automatic start
+  ansible.windows.win_service:
+    name: "{{ windows_exporter_service_name }}"
+    start_mode: auto
+
+- name: Ensure windows_exporter service is running
+  ansible.windows.win_service:
+    name: "{{ windows_exporter_service_name }}"
+    state: started
+
+# ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
+- name: Query windows_exporter service state
+  ansible.windows.win_service:
+    name: "{{ windows_exporter_service_name }}"
+  register: svc_state
+
+- name: Assert windows_exporter is running
+  ansible.builtin.assert:
+    that: svc_state.state == "running"
+    fail_msg: "windows_exporter service is not running on {{ inventory_hostname }}"
+    success_msg: "windows_exporter is running on {{ inventory_hostname }}:{{ windows_exporter_port }}"
+
+- name: Test metrics endpoint is responding
+  ansible.windows.win_shell: |
+    try {
+      $response = Invoke-WebRequest -Uri "http://localhost:{{ windows_exporter_port }}/metrics" -UseBasicParsing -TimeoutSec 10
+      Write-Output "HTTP $($response.StatusCode)"
+    } catch {
+      Write-Error $_.Exception.Message
+      exit 1
+    }
+  register: metrics_test
+  changed_when: false
+  retries: 5
+  delay: 5
+  until: metrics_test.rc == 0

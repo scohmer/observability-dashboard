@@ -1,0 +1,35 @@
+---
+# group_vars/all.yml
+# Variables that apply to ALL hosts in the inventory.
+# Override these in host_vars/<hostname>.yml for per-host customization.
+
+# ── Monitoring server ────────────────────────────────────────────────────────
+# Address of the host running the Docker Compose stack.
+# Set this to the actual monitoring server IP or hostname.
+monitoring_server: "{{ groups['all'] | first }}"
+loki_server: "{{ monitoring_server }}"
+prometheus_server: "{{ monitoring_server }}"
+
+# ── Offline packages ─────────────────────────────────────────────────────────
+offline_packages_dir: "{{ playbook_dir }}/../offline-packages"
+
+# ── Node Exporter (Linux) ────────────────────────────────────────────────────
+node_exporter_version: "1.8.2"
+node_exporter_port: 9100
+
+# ── Windows Exporter ─────────────────────────────────────────────────────────
+windows_exporter_version: "0.29.2"
+windows_exporter_port: 9182
+
+# ── Promtail ─────────────────────────────────────────────────────────────────
+promtail_version: "3.0.0"
+promtail_port: 9080
+loki_url: "http://{{ loki_server }}:3100"
+
+# ── Common settings ──────────────────────────────────────────────────────────
+# Retry settings for package downloads
+download_retries: 3
+download_delay: 5
+
+# Whether to manage host firewall rules
+manage_firewall: true

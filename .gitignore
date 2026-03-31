@@ -1,0 +1,49 @@
+# offline-packages/ contains large binaries — never commit these
+offline-packages/docker-images/
+offline-packages/node_exporter/*.tar.gz
+offline-packages/windows_exporter/*.msi
+offline-packages/promtail/*.zip
+offline-packages/promtail/*.exe
+offline-packages/nssm/*.zip
+offline-packages/nssm/*.exe
+offline-packages/MANIFEST.txt
+
+# Keep the README so the directory is tracked
+!offline-packages/README.md
+
+# Ansible sensitive files
+ansible/inventory/hosts.yml
+ansible/.vault_pass
+*.retry
+*.vault
+
+# Grafana data directory (if mounted locally instead of named volume)
+grafana-data/
+prometheus-data/
+loki-data/
+
+# Generated docker-compose.yml (contains passwords)
+# Comment out the next line if you want to commit the generated version
+# docker-compose.yml
+
+# OS-specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# Logs
+*.log

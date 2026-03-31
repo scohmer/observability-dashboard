@@ -1,0 +1,130 @@
+---
+# Promtail configuration — managed by Ansible (promtail_linux role)
+# Host: {{ inventory_hostname }} | Generated: {{ ansible_date_time.iso8601 }}
+
+server:
+  http_listen_port: {{ promtail_port }}
+  grpc_listen_port: 0
+  log_level: info
+
+positions:
+  filename: {{ promtail_positions_dir }}/positions.yaml
+  sync_period: 10s
+
+clients:
+  - url: {{ loki_url }}/loki/api/v1/push
+    tenant_id: ""
+    batchwait: 1s
+    batchsize: 102400
+    timeout: 10s
+    backoff_config:
+      min_period: 500ms
+      max_period: 5m
+      max_retries: 10
+    external_labels:
+      host: {{ inventory_hostname }}
+      environment: production
+
+scrape_configs:
+
+{% if promtail_scrape_var_log %}
+  # ── /var/log flat ──────────────────────────────────────────────────────────
+  - job_name: varlog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlog
+          host: {{ inventory_hostname }}
+          __path__: /var/log/*.log
+    pipeline_stages:
+      - match:
+          selector: '{job="varlog"}'
+          stages:
+            - multiline:
+                firstline: '^\d{4}-\d{2}-\d{2}'
+                max_wait_time: 3s
+            - regex:
+                expression: '^(?P<timestamp>\S+ \S+)\s+(?P<level>\w+)\s+(?P<message>.*)'
+            - labels:
+                level:
+            - timestamp:
+                source: timestamp
+                format: "2006-01-02 15:04:05"
+                location: UTC
+
+  # ── /var/log recursive ─────────────────────────────────────────────────────
+  - job_name: varlog_subdirs
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: varlog
+          host: {{ inventory_hostname }}
+          __path__: /var/log/**/*.log
+
+  # ── syslog ────────────────────────────────────────────────────────────────
+  - job_name: syslog
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: syslog
+          host: {{ inventory_hostname }}
+          __path__: /var/log/syslog
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<timestamp>\w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<process>\S+?)(\[(?P<pid>\d+)\])?: (?P<message>.*)'
+      - labels:
+          hostname:
+          process:
+      - timestamp:
+          source: timestamp
+          format: "Jan  2 15:04:05"
+          location: Local
+
+  # ── auth.log / secure ─────────────────────────────────────────────────────
+  - job_name: auth_log
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: auth
+          host: {{ inventory_hostname }}
+          __path__: /var/log/{auth.log,secure}
+    pipeline_stages:
+      - regex:
+          expression: '^(?P<timestamp>\w{3}\s+\d{1,2} \d{2}:\d{2}:\d{2}) (?P<hostname>\S+) (?P<process>\S+?)(\[(?P<pid>\d+)\])?: (?P<message>.*)'
+      - labels:
+          hostname:
+          process:
+{% endif %}
+
+{% if promtail_scrape_journal %}
+  # ── systemd journal ────────────────────────────────────────────────────────
+  - job_name: journal
+    journal:
+      max_age: 12h
+      path: /var/log/journal
+      labels:
+        job: systemd-journal
+        host: {{ inventory_hostname }}
+    relabel_configs:
+      - source_labels: ['__journal__systemd_unit']
+        target_label: unit
+      - source_labels: ['__journal__hostname']
+        target_label: hostname
+      - source_labels: ['__journal_priority_keyword']
+        target_label: level
+    pipeline_stages:
+      - match:
+          selector: '{unit="ssh.service"}'
+          stages:
+            - labels:
+                unit:
+{% endif %}
+
+{% for job in promtail_extra_scrape_configs %}
+  # ── Extra job: {{ job.job_name }} ──────────────────────────────────────────
+  - {{ job | to_nice_yaml | indent(4) }}
+{% endfor %}

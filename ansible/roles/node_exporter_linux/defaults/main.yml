@@ -1,0 +1,58 @@
+---
+# defaults/main.yml — node_exporter_linux role
+
+# Version of node_exporter to install
+node_exporter_version: "1.8.2"
+
+# System user that runs node_exporter
+node_exporter_user: node_exporter
+
+# System group for node_exporter
+node_exporter_group: node_exporter
+
+# Port node_exporter listens on
+node_exporter_port: 9100
+
+# Installation directory for the binary
+node_exporter_bin_dir: /usr/local/bin
+
+# Directory for offline packages (air-gapped deployments)
+offline_packages_dir: "{{ playbook_dir }}/../offline-packages"
+
+# Architecture map: translate Ansible arch names to GitHub release naming
+node_exporter_arch_map:
+  x86_64: amd64
+  aarch64: arm64
+  armv7l: armv7
+  i386: 386
+
+# Derived architecture string
+node_exporter_arch: "{{ node_exporter_arch_map[ansible_architecture] | default('amd64') }}"
+
+# Tarball filename
+node_exporter_tarball: "node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_arch }}.tar.gz"
+
+# Download URL (used when NOT air-gapped)
+node_exporter_download_url: >-
+  https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/{{ node_exporter_tarball }}
+
+# Path to offline tarball on the control node
+node_exporter_offline_src: "{{ offline_packages_dir }}/node_exporter/{{ node_exporter_tarball }}"
+
+# Systemd service name
+node_exporter_service_name: node_exporter
+
+# Extra flags to pass to node_exporter (list of strings)
+node_exporter_extra_flags: []
+# Example:
+#   - "--collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run)($|/)"
+#   - "--collector.textfile.directory=/var/lib/node_exporter/textfile_collector"
+
+# Collectors to enable (empty list means use node_exporter defaults)
+node_exporter_enabled_collectors: []
+
+# Whether to configure firewall rules
+node_exporter_manage_firewall: true
+
+# Temporary download directory on target hosts
+node_exporter_tmp_dir: /tmp/node_exporter_install

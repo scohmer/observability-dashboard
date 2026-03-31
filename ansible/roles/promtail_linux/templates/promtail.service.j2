@@ -1,0 +1,36 @@
+[Unit]
+Description=Promtail — Grafana Loki log shipping agent
+Documentation=https://grafana.com/docs/loki/latest/clients/promtail/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ promtail_user }}
+Group={{ promtail_group }}
+ExecStart={{ promtail_bin_dir }}/promtail \
+  -config.file={{ promtail_config_dir }}/promtail-config.yml \
+  -log.level=info
+
+SyslogIdentifier=promtail
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictRealtime=yes
+LockPersonality=yes
+
+# Allow reading logs
+ReadWritePaths={{ promtail_positions_dir }}
+ReadOnlyPaths=/var/log
+
+[Install]
+WantedBy=multi-user.target

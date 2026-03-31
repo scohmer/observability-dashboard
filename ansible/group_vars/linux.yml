@@ -1,0 +1,18 @@
+---
+# group_vars/linux.yml
+# Variables that apply to all hosts in the [linux] group.
+
+# Use the correct Python interpreter automatically (avoids deprecation warnings)
+ansible_python_interpreter: /usr/bin/python3
+
+# Escalate privileges for all tasks on Linux hosts
+become: true
+become_method: sudo
+become_user: root
+
+# SSH connection settings
+ansible_connection: ssh
+ansible_port: 22
+
+# Use pipelining for performance (must be enabled in ansible.cfg too)
+ansible_ssh_pipelining: true
