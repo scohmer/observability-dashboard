@@ -7,6 +7,7 @@ offline-packages/promtail/*.exe
 offline-packages/nssm/*.zip
 offline-packages/nssm/*.exe
 offline-packages/ansible-collections/*.tar.gz
+offline-packages/pip-packages/*.whl
 offline-packages/MANIFEST.txt
 
 # Keep the README so the directory is tracked

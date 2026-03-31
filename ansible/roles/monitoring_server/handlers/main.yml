@@ -2,5 +2,5 @@
 - name: Restart observability stack
   ansible.builtin.shell: >
     cd {{ monitoring_app_dir }} &&
-    {{ docker_compose_cmd }} up -d --remove-orphans
+    podman-compose up -d
   listen: "Restart observability stack"

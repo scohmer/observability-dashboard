@@ -17,7 +17,8 @@
 # Prerequisites:
 #   - Run scripts/offline-prep.sh on an internet-connected machine first
 #   - Run setup.sh to generate ansible/inventory/hosts.yml and config files
-#   - Docker (CE 24+) and rsync must already be installed on the monitoring server
+#   - rsync must be available on the Ansible controller (used by synchronize module)
+#   - Podman and podman-compose are installed by this playbook — no pre-installation needed
 
 - name: Deploy observability stack to monitoring server
   hosts: monitoring

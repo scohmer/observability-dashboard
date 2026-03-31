@@ -1,4 +1,58 @@
 ---
+# ── Install Podman ────────────────────────────────────────────────────────────
+
+- name: Install Podman and dependencies (RHEL / Rocky / AlmaLinux / Fedora)
+  ansible.builtin.dnf:
+    name:
+      - podman
+      - python3-pip
+      - rsync
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Install Podman and dependencies (Debian / Ubuntu)
+  ansible.builtin.apt:
+    name:
+      - podman
+      - python3-pip
+      - rsync
+    state: present
+    update_cache: true
+  when: ansible_os_family == "Debian"
+
+# ── Install podman-compose ────────────────────────────────────────────────────
+
+- name: Look for offline pip wheels for podman-compose on controller
+  ansible.builtin.find:
+    paths: "{{ offline_packages_dir }}/pip-packages"
+    patterns: "*.whl"
+  delegate_to: localhost
+  become: false
+  register: pip_wheels
+
+- name: Copy offline pip wheels to monitoring server
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "/var/ansible/tmp/{{ item.path | basename }}"
+    mode: '0644'
+  loop: "{{ pip_wheels.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: pip_wheels.files | length > 0
+
+- name: Install podman-compose from offline pip wheels
+  ansible.builtin.pip:
+    name: podman-compose
+    state: present
+    extra_args: "--no-index --find-links /var/ansible/tmp"
+  when: pip_wheels.files | length > 0
+
+- name: Install podman-compose from PyPI (no offline wheels found)
+  ansible.builtin.pip:
+    name: podman-compose
+    state: present
+  when: pip_wheels.files | length == 0
+
 # ── Preflight checks ──────────────────────────────────────────────────────────
 
 - name: Ensure /var/ansible/tmp exists on monitoring server
@@ -7,34 +61,17 @@
     state: directory
     mode: '0755'
 
-- name: Verify Docker is installed
-  ansible.builtin.command: docker --version
+- name: Verify Podman is installed and functional
+  ansible.builtin.command: podman --version
   changed_when: false
-  failed_when: docker_check.rc != 0
-  register: docker_check
+  register: podman_check
+  failed_when: podman_check.rc != 0
 
-- name: Detect Docker Compose command (v2 plugin preferred, v1 standalone fallback)
-  ansible.builtin.shell: |
-    if docker compose version >/dev/null 2>&1; then
-      echo "docker compose"
-    elif command -v docker-compose >/dev/null 2>&1; then
-      echo "docker-compose"
-    else
-      echo "NOT_FOUND"
-    fi
+- name: Verify podman-compose is available
+  ansible.builtin.command: podman-compose version
   changed_when: false
-  register: compose_cmd_result
-
-- name: Fail if Docker Compose is not available
-  ansible.builtin.fail:
-    msg: >
-      Neither 'docker compose' (v2 plugin) nor 'docker-compose' (v1) was found
-      on {{ inventory_hostname }}. Install Docker Compose before running this playbook.
-  when: compose_cmd_result.stdout == "NOT_FOUND"
-
-- name: Set Docker Compose command fact
-  ansible.builtin.set_fact:
-    docker_compose_cmd: "{{ compose_cmd_result.stdout }}"
+  register: compose_check
+  failed_when: compose_check.rc != 0
 
 # ── Directory structure ───────────────────────────────────────────────────────
 
@@ -53,9 +90,9 @@
     - "{{ monitoring_data_dir }}/prometheus"
     - "{{ monitoring_data_dir }}/loki"
 
-# ── Transfer and load Docker images ──────────────────────────────────────────
+# ── Transfer and load container images ───────────────────────────────────────
 
-- name: Find Docker image tarballs in offline-packages on controller
+- name: Find container image tarballs in offline-packages on controller
   ansible.builtin.find:
     paths: "{{ offline_packages_dir }}/docker-images"
     patterns: "*.tar.gz"
@@ -66,12 +103,12 @@
 - name: Fail if no image tarballs found
   ansible.builtin.fail:
     msg: >
-      No Docker image tarballs found in {{ offline_packages_dir }}/docker-images/.
+      No container image tarballs found in {{ offline_packages_dir }}/docker-images/.
       Run scripts/offline-prep.sh on an internet-connected machine first,
       then transfer the offline-packages/ directory to this controller.
   when: image_tarballs.files | length == 0
 
-- name: Copy Docker image tarballs to monitoring server
+- name: Copy container image tarballs to monitoring server
   ansible.builtin.copy:
     src: "{{ item.path }}"
     dest: "{{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}"
@@ -80,23 +117,23 @@
   loop_control:
     label: "{{ item.path | basename }}"
 
-- name: Load Docker images from tarballs
+- name: Load container images into Podman
   ansible.builtin.command: >
-    docker load -i {{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}
+    podman load -i {{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}
   loop: "{{ image_tarballs.files }}"
   loop_control:
     label: "{{ item.path | basename }}"
   changed_when: true
-  register: docker_load_results
+  register: podman_load_results
 
 - name: Show loaded image names
   ansible.builtin.debug:
     msg: "{{ item.stdout_lines }}"
-  loop: "{{ docker_load_results.results }}"
+  loop: "{{ podman_load_results.results }}"
   loop_control:
     label: "{{ item.item.path | basename }}"
 
-- name: Remove image staging tarballs from monitoring server to free disk space
+- name: Remove image staging tarballs to free disk space
   ansible.builtin.file:
     path: "{{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}"
     state: absent
@@ -125,17 +162,17 @@
 
 # ── Start the stack ───────────────────────────────────────────────────────────
 
-- name: Start observability stack with Docker Compose
+- name: Start observability stack with podman-compose
   ansible.builtin.shell: >
     cd {{ monitoring_app_dir }} &&
-    {{ docker_compose_cmd }} up -d --remove-orphans
+    podman-compose up -d
   register: compose_up
   changed_when: >
     'Started' in compose_up.stdout or
     'Created' in compose_up.stdout or
     'Recreated' in compose_up.stdout
 
-- name: Show Docker Compose output
+- name: Show podman-compose output
   ansible.builtin.debug:
     var: compose_up.stdout_lines
 

@@ -1,8 +1,11 @@
----
-# docker-compose.yml — Default template for the observability stack.
+# docker-compose.yml — Observability stack for use with podman-compose.
 # This file is overwritten by setup.sh with environment-specific values.
-# Run `./setup.sh` to generate a customized version.
-version: "3.9"
+# Run `./setup.sh` to generate a customised version, then deploy via Ansible.
+#
+# Start manually (on the monitoring server):  podman-compose up -d
+# Stop:                                        podman-compose down
+# Status:                                      podman-compose ps
+# Logs:                                        podman-compose logs -f
 
 networks:
   observability:
@@ -16,7 +19,7 @@ volumes:
 services:
 
   # ---------------------------------------------------------------------------
-  # Grafana — Visualization and dashboarding
+  # Grafana — Visualisation and dashboarding
   # ---------------------------------------------------------------------------
   grafana:
     image: grafana/grafana:latest
@@ -52,10 +55,9 @@ services:
       retries: 5
       start_period: 30s
     logging:
-      driver: "json-file"
+      driver: "journald"
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "grafana"
 
   # ---------------------------------------------------------------------------
   # Prometheus — Metrics collection and storage
@@ -87,10 +89,9 @@ services:
       retries: 5
       start_period: 20s
     logging:
-      driver: "json-file"
+      driver: "journald"
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "prometheus"
 
   # ---------------------------------------------------------------------------
   # Loki — Log aggregation
@@ -114,7 +115,6 @@ services:
       retries: 5
       start_period: 20s
     logging:
-      driver: "json-file"
+      driver: "journald"
       options:
-        max-size: "10m"
-        max-file: "3"
+        tag: "loki"

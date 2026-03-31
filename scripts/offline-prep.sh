@@ -4,11 +4,13 @@
 # needed for an air-gapped deployment of the observability dashboard.
 #
 # Artifacts downloaded:
-#   - Docker images: Grafana, Prometheus, Loki, Promtail
+#   - Container images: Grafana, Prometheus, Loki, Promtail (saved as .tar.gz)
 #   - node_exporter binaries: Linux amd64 and arm64
 #   - windows_exporter MSI: amd64
 #   - Promtail binaries: Linux amd64, arm64, and Windows amd64
 #   - NSSM (Non-Sucking Service Manager) for Windows service registration
+#   - Ansible Galaxy collections (for air-gapped controller)
+#   - podman-compose pip wheels (for air-gapped monitoring server)
 #
 # Output directory: ./offline-packages/
 set -euo pipefail
@@ -32,8 +34,19 @@ success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 error()   { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 
+# ── Detect container runtime ──────────────────────────────────────────────────
+if command -v podman >/dev/null 2>&1; then
+  CONTAINER_CMD=podman
+  info "Using Podman as container runtime."
+elif command -v docker >/dev/null 2>&1; then
+  CONTAINER_CMD=docker
+  warn "Podman not found — falling back to Docker for image pull/save."
+else
+  error "Neither podman nor docker is installed. Install one before running this script."
+  exit 1
+fi
+
 # ── Pre-flight ────────────────────────────────────────────────────────────────
-command -v docker  >/dev/null 2>&1 || { error "docker is required but not installed."; exit 1; }
 command -v curl    >/dev/null 2>&1 || { error "curl is required but not installed."; exit 1; }
 
 info "Creating output directories..."
@@ -42,6 +55,7 @@ mkdir -p "${OUTPUT_DIR}/node_exporter"
 mkdir -p "${OUTPUT_DIR}/windows_exporter"
 mkdir -p "${OUTPUT_DIR}/promtail"
 mkdir -p "${OUTPUT_DIR}/nssm"
+mkdir -p "${OUTPUT_DIR}/pip-packages"
 
 MANIFEST_FILE="${OUTPUT_DIR}/MANIFEST.txt"
 echo "# Offline Package Manifest" > "${MANIFEST_FILE}"
@@ -66,10 +80,10 @@ download() {
 }
 
 ###############################################################################
-# 1. Docker images
+# 1. Container images
 ###############################################################################
 echo
-info "=== Pulling Docker images ==="
+info "=== Pulling container images ==="
 
 pull_and_save() {
   local image="$1" tag="${2:-latest}" output_file="$3"
@@ -81,10 +95,10 @@ pull_and_save() {
   fi
 
   info "Pulling ${full_image}..."
-  docker pull "${full_image}"
+  ${CONTAINER_CMD} pull "${full_image}"
 
   info "Saving ${full_image} -> ${output_file}..."
-  docker save "${full_image}" | gzip > "${OUTPUT_DIR}/docker-images/${output_file}"
+  ${CONTAINER_CMD} save "${full_image}" | gzip > "${OUTPUT_DIR}/docker-images/${output_file}"
   local size
   size=$(du -sh "${OUTPUT_DIR}/docker-images/${output_file}" | cut -f1)
   success "Saved: ${output_file} (${size})"
@@ -189,7 +203,7 @@ if [[ -f "${OUTPUT_DIR}/nssm/nssm-${NSSM_VERSION}.zip" && ! -f "${OUTPUT_DIR}/ns
 fi
 
 ###############################################################################
-# 6. Ansible collections
+# 6. Ansible Galaxy collections
 ###############################################################################
 echo
 info "=== Downloading Ansible Galaxy collections ==="
@@ -224,7 +238,31 @@ else
 fi
 
 ###############################################################################
-# 7. Manifest summary
+# 7. podman-compose pip wheel (for air-gapped monitoring server)
+###############################################################################
+echo
+info "=== Downloading podman-compose pip wheel ==="
+
+if ! command -v pip3 >/dev/null 2>&1; then
+  warn "pip3 not found — skipping podman-compose wheel download."
+  warn "podman-compose will require PyPI access on the monitoring server."
+else
+  info "Downloading podman-compose and its dependencies as pip wheels..."
+  pip3 download podman-compose \
+    -d "${OUTPUT_DIR}/pip-packages"
+
+  shopt -s nullglob
+  for wheel in "${OUTPUT_DIR}/pip-packages/"*.whl; do
+    echo "$(basename "$wheel")  $(sha256sum "$wheel" | cut -d' ' -f1)" >> "${MANIFEST_FILE}"
+    success "Packaged: $(basename "$wheel") ($(du -sh "$wheel" | cut -f1))"
+  done
+  shopt -u nullglob
+
+  success "podman-compose wheels saved to offline-packages/pip-packages/"
+fi
+
+###############################################################################
+# 8. Manifest summary
 ###############################################################################
 echo
 echo "─────────────────────────────────────────────────────────────────────"
@@ -246,7 +284,10 @@ echo "     the target network via USB drive or secure file transfer."
 echo "  2. On the Ansible controller, run:  ./setup.sh"
 echo "     setup.sh will auto-detect offline-packages/ansible-collections/ and"
 echo "     install Ansible Galaxy collections from local files before deploying."
-echo "  3. On the monitoring server, run:   scripts/load-images.sh"
-echo "  4. Start the stack:                 docker compose up -d"
-echo "  5. Deploy agents:                   ansible-playbook ansible/playbooks/deploy-node-exporter.yml"
+echo "  3. setup.sh (or the Ansible playbook it triggers) will:"
+echo "       - Install Podman and podman-compose on the monitoring server"
+echo "       - Transfer and load container images"
+echo "       - Push all configuration files"
+echo "       - Start the observability stack"
+echo "       - Deploy node exporters and Promtail to all monitored hosts"
 echo "─────────────────────────────────────────────────────────────────────"
