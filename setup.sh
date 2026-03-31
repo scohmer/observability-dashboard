@@ -62,6 +62,7 @@ echo
 # 1. Monitoring server
 ###############################################################################
 MONITORING_HOST=$(ask "Monitoring server hostname or IP" "localhost")
+MONITORING_SSH_USER=$(ask "Monitoring server SSH username" "ansible")
 GRAFANA_PORT=$(ask "Grafana port" "3000")
 PROMETHEUS_PORT=$(ask "Prometheus port" "9090")
 LOKI_PORT=$(ask "Loki port" "3100")
@@ -134,6 +135,12 @@ all:
     monitoring_server: "${MONITORING_HOST}"
 
   children:
+    monitoring:
+      hosts:
+        monitoring-server:
+          ansible_host: ${MONITORING_HOST}
+          ansible_user: ${MONITORING_SSH_USER}
+
     linux:
       hosts:
 YAML
@@ -485,9 +492,12 @@ done
 echo
 echo "Next steps:"
 echo "  1. Review generated configs in ./config/ and ./ansible/inventory/"
-echo "  2. Start the monitoring stack:  docker compose up -d"
-echo "  3. Deploy agents via Ansible:   cd ansible && ansible-playbook playbooks/deploy-node-exporter.yml"
-echo "  4. Open Grafana at:             http://${MONITORING_HOST}:${GRAFANA_PORT}"
+echo "  2. Deploy the full stack via Ansible (images + config + start):"
+echo "       ansible-playbook ansible/playbooks/deploy-monitoring-server.yml"
+echo "  3. Deploy node exporters and Promtail to monitored hosts:"
+echo "       ansible-playbook ansible/playbooks/deploy-node-exporter.yml"
+echo "       ansible-playbook ansible/playbooks/deploy-promtail.yml"
+echo "  4. Open Grafana at:  http://${MONITORING_HOST}:${GRAFANA_PORT}"
 echo
 
 ###############################################################################
@@ -496,7 +506,13 @@ echo
 if [[ "$RUN_ANSIBLE" == "true" ]]; then
   info "Running Ansible deployment..."
   cd "${ANSIBLE_DIR}"
+  info "Step 1/3: Deploying observability stack to monitoring server..."
+  ansible-playbook playbooks/deploy-monitoring-server.yml
+  info "Step 2/3: Deploying node exporters to monitored hosts..."
   ansible-playbook playbooks/deploy-node-exporter.yml
+  info "Step 3/3: Deploying Promtail to monitored hosts..."
   ansible-playbook playbooks/deploy-promtail.yml
   success "Ansible deployment complete."
+  echo
+  echo "  Grafana is available at: http://${MONITORING_HOST}:${GRAFANA_PORT}"
 fi

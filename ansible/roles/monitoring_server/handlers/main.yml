@@ -1,0 +1,6 @@
+---
+- name: Restart observability stack
+  ansible.builtin.shell: >
+    cd {{ monitoring_app_dir }} &&
+    {{ docker_compose_cmd }} up -d --remove-orphans
+  listen: "Restart observability stack"

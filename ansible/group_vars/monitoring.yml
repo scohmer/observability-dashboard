@@ -1,0 +1,14 @@
+---
+# group_vars/monitoring.yml
+# Variables that apply to the [monitoring] host group (the server running
+# Grafana, Prometheus, and Loki).
+
+ansible_python_interpreter: /usr/bin/python3
+
+become: true
+become_method: sudo
+become_user: root
+
+ansible_connection: ssh
+ansible_port: 22
+ansible_ssh_pipelining: true

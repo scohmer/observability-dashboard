@@ -1,0 +1,19 @@
+---
+# Directory on the monitoring server where the stack lives
+monitoring_app_dir: /opt/observability
+monitoring_data_dir: /opt/observability/data
+
+# Path to offline-packages/ on the Ansible controller
+# (relative to ansible/playbooks/ — two levels up lands at the repo root)
+offline_packages_dir: "{{ playbook_dir }}/../../offline-packages"
+
+# Remove image tarballs from the monitoring server after docker load to save space
+monitoring_cleanup_images: true
+
+# Ports must match docker-compose.yml / what setup.sh generated
+grafana_port: 3000
+prometheus_port: 9090
+loki_port: 3100
+
+# Seconds to wait for each service to report healthy
+stack_startup_timeout: 120

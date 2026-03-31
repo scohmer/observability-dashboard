@@ -1,0 +1,28 @@
+---
+# deploy-monitoring-server.yml
+#
+# Deploys the full observability stack (Grafana, Prometheus, Loki) to the
+# monitoring server. Run this before deploying node exporters and Promtail
+# to the monitored hosts.
+#
+# What this playbook does:
+#   1. Verifies Docker and Docker Compose are installed on the target
+#   2. Creates the application directory structure (/opt/observability)
+#   3. Copies Docker image tarballs from offline-packages/ on the controller
+#   4. Loads each image into the Docker daemon on the monitoring server
+#   5. Synchronises the generated config/ tree and docker-compose.yml
+#   6. Starts the stack with 'docker compose up -d'
+#   7. Polls Grafana, Prometheus, and Loki healthcheck endpoints until ready
+#
+# Prerequisites:
+#   - Run scripts/offline-prep.sh on an internet-connected machine first
+#   - Run setup.sh to generate ansible/inventory/hosts.yml and config files
+#   - Docker (CE 24+) and rsync must already be installed on the monitoring server
+
+- name: Deploy observability stack to monitoring server
+  hosts: monitoring
+  become: true
+  gather_facts: true
+
+  roles:
+    - role: monitoring_server

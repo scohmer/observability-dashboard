@@ -1,0 +1,177 @@
+---
+# ── Preflight checks ──────────────────────────────────────────────────────────
+
+- name: Ensure /var/ansible/tmp exists on monitoring server
+  ansible.builtin.file:
+    path: /var/ansible/tmp
+    state: directory
+    mode: '0755'
+
+- name: Verify Docker is installed
+  ansible.builtin.command: docker --version
+  changed_when: false
+  failed_when: docker_check.rc != 0
+  register: docker_check
+
+- name: Detect Docker Compose command (v2 plugin preferred, v1 standalone fallback)
+  ansible.builtin.shell: |
+    if docker compose version >/dev/null 2>&1; then
+      echo "docker compose"
+    elif command -v docker-compose >/dev/null 2>&1; then
+      echo "docker-compose"
+    else
+      echo "NOT_FOUND"
+    fi
+  changed_when: false
+  register: compose_cmd_result
+
+- name: Fail if Docker Compose is not available
+  ansible.builtin.fail:
+    msg: >
+      Neither 'docker compose' (v2 plugin) nor 'docker-compose' (v1) was found
+      on {{ inventory_hostname }}. Install Docker Compose before running this playbook.
+  when: compose_cmd_result.stdout == "NOT_FOUND"
+
+- name: Set Docker Compose command fact
+  ansible.builtin.set_fact:
+    docker_compose_cmd: "{{ compose_cmd_result.stdout }}"
+
+# ── Directory structure ───────────────────────────────────────────────────────
+
+- name: Create application directory structure
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - "{{ monitoring_app_dir }}"
+    - "{{ monitoring_app_dir }}/config"
+    - "{{ monitoring_app_dir }}/offline-images"
+    - "{{ monitoring_data_dir }}/grafana"
+    - "{{ monitoring_data_dir }}/prometheus"
+    - "{{ monitoring_data_dir }}/loki"
+
+# ── Transfer and load Docker images ──────────────────────────────────────────
+
+- name: Find Docker image tarballs in offline-packages on controller
+  ansible.builtin.find:
+    paths: "{{ offline_packages_dir }}/docker-images"
+    patterns: "*.tar.gz"
+  delegate_to: localhost
+  become: false
+  register: image_tarballs
+
+- name: Fail if no image tarballs found
+  ansible.builtin.fail:
+    msg: >
+      No Docker image tarballs found in {{ offline_packages_dir }}/docker-images/.
+      Run scripts/offline-prep.sh on an internet-connected machine first,
+      then transfer the offline-packages/ directory to this controller.
+  when: image_tarballs.files | length == 0
+
+- name: Copy Docker image tarballs to monitoring server
+  ansible.builtin.copy:
+    src: "{{ item.path }}"
+    dest: "{{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}"
+    mode: '0644'
+  loop: "{{ image_tarballs.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+
+- name: Load Docker images from tarballs
+  ansible.builtin.command: >
+    docker load -i {{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}
+  loop: "{{ image_tarballs.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  changed_when: true
+  register: docker_load_results
+
+- name: Show loaded image names
+  ansible.builtin.debug:
+    msg: "{{ item.stdout_lines }}"
+  loop: "{{ docker_load_results.results }}"
+  loop_control:
+    label: "{{ item.item.path | basename }}"
+
+- name: Remove image staging tarballs from monitoring server to free disk space
+  ansible.builtin.file:
+    path: "{{ monitoring_app_dir }}/offline-images/{{ item.path | basename }}"
+    state: absent
+  loop: "{{ image_tarballs.files }}"
+  loop_control:
+    label: "{{ item.path | basename }}"
+  when: monitoring_cleanup_images | bool
+
+# ── Push configuration files ─────────────────────────────────────────────────
+
+- name: Synchronize config/ directory to monitoring server
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/../../config/"
+    dest: "{{ monitoring_app_dir }}/config/"
+    recursive: true
+    delete: true
+    rsync_opts:
+      - "--chmod=Du=rwx,Dg=rx,Do=rx,Fu=rw,Fg=r,Fo=r"
+
+- name: Copy docker-compose.yml to monitoring server
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../docker-compose.yml"
+    dest: "{{ monitoring_app_dir }}/docker-compose.yml"
+    mode: '0644'
+  notify: Restart observability stack
+
+# ── Start the stack ───────────────────────────────────────────────────────────
+
+- name: Start observability stack with Docker Compose
+  ansible.builtin.shell: >
+    cd {{ monitoring_app_dir }} &&
+    {{ docker_compose_cmd }} up -d --remove-orphans
+  register: compose_up
+  changed_when: >
+    'Started' in compose_up.stdout or
+    'Created' in compose_up.stdout or
+    'Recreated' in compose_up.stdout
+
+- name: Show Docker Compose output
+  ansible.builtin.debug:
+    var: compose_up.stdout_lines
+
+# ── Verify services are healthy ───────────────────────────────────────────────
+
+- name: Wait for Grafana to report healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ grafana_port }}/api/health"
+    status_code: 200
+  register: grafana_health
+  until: grafana_health.status == 200
+  retries: "{{ (stack_startup_timeout | int) // 5 }}"
+  delay: 5
+
+- name: Wait for Prometheus to report healthy
+  ansible.builtin.uri:
+    url: "http://localhost:{{ prometheus_port }}/-/healthy"
+    status_code: 200
+  register: prom_health
+  until: prom_health.status == 200
+  retries: "{{ (stack_startup_timeout | int) // 5 }}"
+  delay: 5
+
+- name: Wait for Loki to report ready
+  ansible.builtin.uri:
+    url: "http://localhost:{{ loki_port }}/ready"
+    status_code: 200
+  register: loki_health
+  until: loki_health.status == 200
+  retries: "{{ (stack_startup_timeout | int) // 5 }}"
+  delay: 5
+
+- name: Observability stack is up
+  ansible.builtin.debug:
+    msg:
+      - "Observability stack deployed successfully on {{ inventory_hostname }}."
+      - "Grafana:    http://{{ ansible_host }}:{{ grafana_port }}"
+      - "Prometheus: http://{{ ansible_host }}:{{ prometheus_port }}"
+      - "Loki:       http://{{ ansible_host }}:{{ loki_port }}"
