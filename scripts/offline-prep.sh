@@ -189,7 +189,42 @@ if [[ -f "${OUTPUT_DIR}/nssm/nssm-${NSSM_VERSION}.zip" && ! -f "${OUTPUT_DIR}/ns
 fi
 
 ###############################################################################
-# 6. Manifest summary
+# 6. Ansible collections
+###############################################################################
+echo
+info "=== Downloading Ansible Galaxy collections ==="
+
+if ! command -v ansible-galaxy >/dev/null 2>&1; then
+  warn "ansible-galaxy not found — skipping collection download."
+  warn "Install Ansible on this machine to include offline collection packages."
+  warn "Collections required: ansible.posix, community.general, ansible.windows, community.windows"
+else
+  REQUIREMENTS_FILE="${SCRIPT_DIR}/../ansible/requirements.yml"
+
+  if [[ ! -f "$REQUIREMENTS_FILE" ]]; then
+    warn "ansible/requirements.yml not found — skipping collection download."
+  else
+    mkdir -p "${OUTPUT_DIR}/ansible-collections"
+
+    info "Downloading collections listed in ansible/requirements.yml..."
+    ansible-galaxy collection download \
+      -r "$REQUIREMENTS_FILE" \
+      --download-path "${OUTPUT_DIR}/ansible-collections"
+
+    # Log each downloaded tarball into the manifest
+    shopt -s nullglob
+    for tarball in "${OUTPUT_DIR}/ansible-collections/"*.tar.gz; do
+      echo "$(basename "$tarball")  $(sha256sum "$tarball" | cut -d' ' -f1)" >> "${MANIFEST_FILE}"
+      success "Packaged: $(basename "$tarball") ($(du -sh "$tarball" | cut -f1))"
+    done
+    shopt -u nullglob
+
+    success "Ansible collections saved to offline-packages/ansible-collections/"
+  fi
+fi
+
+###############################################################################
+# 7. Manifest summary
 ###############################################################################
 echo
 echo "─────────────────────────────────────────────────────────────────────"
@@ -206,10 +241,12 @@ du -sh "${OUTPUT_DIR}"
 echo
 echo "─────────────────────────────────────────────────────────────────────"
 echo "Next steps for air-gapped deployment:"
-echo "  1. Copy the entire offline-packages/ directory to the target network"
-echo "     (USB drive, secure file transfer, etc.)"
-echo "  2. On the monitoring server, run:  scripts/load-images.sh"
-echo "  3. Run setup.sh and answer the prompts"
-echo "  4. Start the stack:  docker compose up -d"
-echo "  5. Deploy agents:    cd ansible && ansible-playbook playbooks/deploy-node-exporter.yml"
+echo "  1. Copy the entire project directory (including offline-packages/) to"
+echo "     the target network via USB drive or secure file transfer."
+echo "  2. On the Ansible controller, run:  ./setup.sh"
+echo "     setup.sh will auto-detect offline-packages/ansible-collections/ and"
+echo "     install Ansible Galaxy collections from local files before deploying."
+echo "  3. On the monitoring server, run:   scripts/load-images.sh"
+echo "  4. Start the stack:                 docker compose up -d"
+echo "  5. Deploy agents:                   ansible-playbook ansible/playbooks/deploy-node-exporter.yml"
 echo "─────────────────────────────────────────────────────────────────────"

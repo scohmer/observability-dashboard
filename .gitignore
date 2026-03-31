@@ -6,6 +6,7 @@ offline-packages/promtail/*.zip
 offline-packages/promtail/*.exe
 offline-packages/nssm/*.zip
 offline-packages/nssm/*.exe
+offline-packages/ansible-collections/*.tar.gz
 offline-packages/MANIFEST.txt
 
 # Keep the README so the directory is tracked
@@ -25,6 +26,9 @@ loki-data/
 # Generated docker-compose.yml (contains passwords)
 # Comment out the next line if you want to commit the generated version
 # docker-compose.yml
+
+# Claude Code internal
+.claude/
 
 # OS-specific
 .DS_Store

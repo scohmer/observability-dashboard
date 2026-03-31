@@ -440,7 +440,35 @@ YAML
 done
 
 ###############################################################################
-# 5. Summary
+# 5. Install Ansible collections
+###############################################################################
+OFFLINE_COLLECTIONS="${SCRIPT_DIR}/offline-packages/ansible-collections"
+
+if ! command -v ansible-galaxy >/dev/null 2>&1; then
+  warn "ansible-galaxy not found — skipping collection install."
+  warn "Install Ansible on this controller before running playbooks."
+  warn "Required collections: ansible.posix  community.general  ansible.windows  community.windows"
+else
+  info "Installing Ansible Galaxy collections..."
+
+  # Prefer offline packages if they were produced by offline-prep.sh
+  if ls "${OFFLINE_COLLECTIONS}/"*.tar.gz >/dev/null 2>&1; then
+    info "Offline collection packages found — installing without internet access..."
+    ansible-galaxy collection install \
+      "${OFFLINE_COLLECTIONS}/"*.tar.gz \
+      --upgrade 2>&1 | grep -v "^WARNING" || true
+    success "Ansible collections installed from offline-packages/ansible-collections/"
+  else
+    info "No offline packages found — installing from Ansible Galaxy..."
+    ansible-galaxy collection install \
+      -r "${ANSIBLE_DIR}/requirements.yml" \
+      --upgrade 2>&1 | grep -v "^WARNING" || true
+    success "Ansible collections installed from Galaxy."
+  fi
+fi
+
+###############################################################################
+# 6. Summary
 ###############################################################################
 echo
 echo -e "${GREEN}========================================${NC}"
@@ -463,7 +491,7 @@ echo "  4. Open Grafana at:             http://${MONITORING_HOST}:${GRAFANA_PORT
 echo
 
 ###############################################################################
-# 6. Optional: run Ansible
+# 7. Optional: run Ansible
 ###############################################################################
 if [[ "$RUN_ANSIBLE" == "true" ]]; then
   info "Running Ansible deployment..."
